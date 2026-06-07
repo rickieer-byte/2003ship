@@ -1,0 +1,9 @@
+{
+  "name": "Last Mile Driver",
+  "short_name": "Driver",
+  "start_url": "/driver/portal",
+  "display": "standalone",
+  "background_color": "#f4f6f9",
+  "theme_color": "#1e3a8a",
+  "icons": []
+}

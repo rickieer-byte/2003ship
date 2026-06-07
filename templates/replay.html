@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Event Replay</title>
+    <style>
+        :root { --primary: #1e3a8a; --surface: #fff; --bg: #f4f6f9; }
+        body { font-family: 'Segoe UI', sans-serif; margin: 0; padding: 30px; background: var(--bg); }
+        .wrap { max-width: 900px; margin: 0 auto; }
+        header { background: var(--surface); padding: 20px 24px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        h1 { margin: 0; color: var(--primary); font-size: 22px; }
+        a { color: var(--primary); font-weight: bold; text-decoration: none; }
+        .controls { background: var(--surface); padding: 16px 20px; border-radius: 8px; margin-bottom: 20px; }
+        select, button { padding: 8px 12px; font-size: 14px; }
+        .timeline { position: relative; padding-left: 24px; }
+        .timeline::before { content: ''; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: #cbd5e1; }
+        .event {
+            background: var(--surface); padding: 14px 18px; border-radius: 8px;
+            margin-bottom: 12px; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+        }
+        .event::before {
+            content: ''; position: absolute; left: -20px; top: 18px;
+            width: 10px; height: 10px; border-radius: 50%; background: var(--primary);
+        }
+        .event-type { font-weight: bold; color: var(--primary); font-size: 14px; }
+        .event-meta { font-size: 12px; color: #64748b; margin-top: 4px; }
+        .event-payload { font-size: 12px; background: #f8fafc; padding: 8px; border-radius: 4px; margin-top: 8px; word-break: break-all; }
+        input[type=range] { width: 100%; margin-top: 12px; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <header>
+        <h1>Container Journey Replay</h1>
+        <a href="/">← Operations Hub</a>
+    </header>
+    <div class="controls">
+        <label>Filter by container: </label>
+        <select id="container-filter" onchange="loadEvents()">
+            <option value="">All recent events</option>
+            {% for cid in container_ids %}
+            <option value="{{ cid }}">{{ cid }}</option>
+            {% endfor %}
+        </select>
+        <button onclick="loadEvents()" style="margin-left:8px;">Refresh</button>
+        <input type="range" id="scrubber" min="0" max="0" value="0" oninput="scrubTo(this.value)">
+    </div>
+    <div id="timeline" class="timeline"></div>
+</div>
+<script>
+let allEvents = [];
+
+function loadEvents() {
+    const c = document.getElementById('container-filter').value;
+    const url = c ? `/api/replay/events?container=${c}` : '/api/replay/events';
+    fetch(url).then(r => r.json()).then(data => {
+        allEvents = c ? data.events : data.events.reverse();
+        document.getElementById('scrubber').max = Math.max(0, allEvents.length - 1);
+        document.getElementById('scrubber').value = allEvents.length - 1;
+        renderEvents(allEvents);
+    });
+}
+
+function renderEvents(events) {
+    const el = document.getElementById('timeline');
+    if (!events.length) { el.innerHTML = '<p style="color:#64748b;">No events recorded yet.</p>'; return; }
+    el.innerHTML = events.map(ev => `
+        <div class="event">
+            <div class="event-type">${ev.event_type}</div>
+            <div class="event-meta">${ev.container_number || '—'} · ${ev.source_api} · ${ev.event_timestamp}</div>
+            <div class="event-payload">${typeof ev.raw_payload === 'string' ? ev.raw_payload : JSON.stringify(ev.raw_payload || {})}</div>
+        </div>
+    `).join('');
+}
+
+function scrubTo(idx) {
+    renderEvents(allEvents.slice(0, parseInt(idx, 10) + 1));
+}
+
+loadEvents();
+</script>
+</body>
+</html>

@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Operations MIS Dashboard - Live Action Queues</title>
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --primary-dark: #0f172a;
+            --bg-main: #f4f6f9;
+            --surface: #ffffff;
+            --text-dark: #334155;
+            --border: #e5e7eb;
+            
+            /* Traffic Light System Variables */
+            --color-green: #10b981;
+            --color-yellow: #f59e0b;
+            --color-red: #ef4444;
+            --color-ongoing: #3b82f6;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-dark);
+            margin: 0;
+            padding: 30px;
+        }
+
+        .dashboard-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: var(--surface);
+            padding: 20px 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        h1 {
+            color: var(--primary);
+            margin: 0;
+            font-size: 24px;
+        }
+
+        .user-profile {
+            font-size: 14px;
+        }
+
+        .nav-links a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: bold;
+            margin-left: 15px;
+        }
+
+        .nav-links a:hover {
+            text-decoration: underline;
+        }
+
+        .table-card {
+            background: var(--surface);
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+            overflow: hidden;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th, td {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            background-color: var(--primary-dark);
+            color: white;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 12px;
+            letter-spacing: 0.5px;
+        }
+
+        tr:hover {
+            background-color: #f8fafc;
+        }
+
+        /* Badge Matrix Design */
+        .badge {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 11px;
+            display: inline-block;
+            min-width: 100px;
+            text-align: center;
+            letter-spacing: 0.5px;
+        }
+
+        .status-RED { background-color: var(--color-red); color: white; }
+        .status-YELLOW { background-color: var(--color-yellow); color: white; }
+        .status-GREEN { background-color: var(--color-green); color: white; }
+        
+        .status-ONGOING { 
+            background-color: var(--color-ongoing); 
+            color: white; 
+            animation: pulseStream 1.5s infinite ease-in-out; 
+        }
+        .status-AWAITING { background-color: #8b5cf6; color: white; }
+        .status-EMERGENCY { background-color: #dc2626; color: white; }
+        .status-SLOT-WAIT { background-color: #a855f7; color: white; }
+        .status-TO-WAREHOUSE { background-color: #d97706; color: white; }
+        .status-TO-PORT { background-color: #2563eb; color: white; }
+        .status-TO-WAREHOUSE { background-color: #d97706; color: white; }
+        .status-AT-WAREHOUSE { background-color: #059669; color: white; }
+        .action-hint { font-size: 13px; color: #64748b; }
+        .port-slots-bar { background: white; border-radius: 8px; padding: 14px 18px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
+        .port-slots-grid { display: flex; gap: 8px; flex-wrap: wrap; }
+        .port-slot-pill { padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; border: 2px solid #e2e8f0; background: #f8fafc; color: #64748b; }
+        .port-slot-pill.busy { border-color: #fca5a5; background: #fef2f2; color: #991b1b; }
+        .port-slot-pill.free { border-color: #86efac; background: #f0fdf4; color: #166534; }
+        .status-AT-PORT { background-color: #059669; color: white; }
+
+        @keyframes pulseStream {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(0.98); }
+        }
+
+        .fade-out {
+            opacity: 0;
+            transform: translateY(-10px);
+            transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .btn {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 13px;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background-color: #1d4ed8;
+        }
+
+        .btn:disabled {
+            background-color: #94a3b8;
+            cursor: not-allowed;
+        }
+
+        /* Modal Overlay Windows */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(4px);
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        .modal-card {
+            background: var(--surface);
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 480px;
+            width: 100%;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.15);
+        }
+
+        .modal-card h3 {
+            color: var(--color-red);
+            margin-top: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .financial-grid {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            padding: 15px;
+            border-radius: 6px;
+            margin: 20px 0;
+            font-size: 14px;
+        }
+
+        .financial-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+
+        .financial-total {
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            font-size: 15px;
+            margin-top: 10px;
+            border-top: 1px dashed #cbd5e1;
+            padding-top: 10px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        .btn-secondary {
+            background: #64748b;
+        }
+        .btn-secondary:hover {
+            background: #475569;
+        }
+        .btn-danger {
+            background: var(--color-red);
+        }
+        .btn-danger:hover {
+            background: #b91c1c;
+        }
+
+        .fleet-bar {
+            background: var(--surface);
+            padding: 16px 24px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            font-size: 14px;
+        }
+        .fleet-stats { display: flex; gap: 20px; flex-wrap: wrap; }
+        .fleet-stats span { color: #64748b; }
+        .fleet-stats strong { color: var(--primary-dark); }
+        .fleet-hint {
+            color: #64748b;
+            font-size: 13px;
+            max-width: 420px;
+            text-align: right;
+        }
+        .savings-strip {
+            background: linear-gradient(135deg, #065f46, #10b981);
+            color: white;
+            padding: 14px 24px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+        }
+        .savings-strip a { color: white; font-weight: bold; }
+        .savings-strip .amount { font-size: 22px; font-weight: bold; }
+        .modal-hint {
+            font-size: 13px;
+            color: #0369a1;
+            background: #e0f2fe;
+            padding: 10px 12px;
+            border-radius: 6px;
+            margin: 12px 0 0;
+        }
+        .inbound-panel {
+            background: var(--surface);
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            padding: 16px 24px;
+            margin-bottom: 20px;
+        }
+        .inbound-panel h3 { margin: 0 0 12px; font-size: 14px; color: var(--primary); text-transform: uppercase; }
+        .inbound-list { display: flex; flex-wrap: wrap; gap: 12px; }
+        .inbound-chip {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 13px;
+            min-width: 200px;
+        }
+        .inbound-chip strong { display: block; color: var(--primary-dark); }
+        .inbound-chip .eta { color: #64748b; font-size: 12px; margin-top: 4px; }
+        #pod-canvas { border: 1px solid #cbd5e1; border-radius: 4px; background: white; touch-action: none; width: 100%; }
+        .pod-note { width: 100%; padding: 8px; margin: 10px 0; border: 1px solid #cbd5e1; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+<div class="dashboard-container">
+    <header>
+        <div>
+            <h1>To-Be Digital Process Architecture Hub</h1>
+            <div class="user-profile">
+                Logged Session: <strong>{{ username }}</strong> | Role Scope: <span style="text-transform: uppercase; color: var(--primary);">{{ role }}</span>
+            </div>
+        </div>
+        <div class="nav-links">
+            <a href="/drivers">Drivers</a>
+            <a href="/tracking">Live Map</a>
+            <a href="/replay">Event Replay</a>
+            <a href="/driver" target="_blank">Driver App</a>
+            {% if role == 'Fleet Manager' %}
+                <a href="/fleet">Manage Fleet</a>
+                <a href="/analytics">Strategic ESS Reports</a>
+            {% endif %}
+            <a href="/logout" style="color: var(--color-red);">Secure Exit</a>
+        </div>
+    </header>
+
+    {% if role == 'Fleet Manager' and savings %}
+    <div class="savings-strip">
+        <div>
+            <span style="opacity:0.9; text-transform:uppercase; font-size:11px; letter-spacing:0.5px;">Fleet savings this period</span>
+            <div class="amount">${{ "{:,.2f}".format(savings.total_savings) }}</div>
+        </div>
+        <div style="opacity:0.9;">{{ savings.on_time_dispatches }} on-time internal dispatch{{ 'es' if savings.on_time_dispatches != 1 else '' }}</div>
+        <a href="/analytics">View full report →</a>
+    </div>
+    {% endif %}
+
+    <div class="fleet-bar">
+        <div class="fleet-stats">
+            <span><strong>{{ fleet.dispatchable }}</strong> on shift &amp; ready</span>
+            <span><strong>{{ fleet.off_shift_available }}</strong> off shift</span>
+            <span><strong>{{ fleet.on_delivery }}</strong> on delivery</span>
+            {% if fleet.offline %}<span><strong>{{ fleet.offline }}</strong> offline</span>{% endif %}
+        </div>
+        <div class="fleet-hint">
+            {% if fleet.dispatchable == 0 %}
+                No drivers dispatchable right now — <strong>Instant Allocate</strong> will offer emergency hire.
+            {% else %}
+                Internal fleet available for standard dispatch.
+            {% endif %}
+        </div>
+    </div>
+
+    {% if port_slots %}
+    <div class="port-slots-bar">
+        <div>
+            <strong>Port Prime-Mover Slots</strong>
+            <span style="font-size:13px; color:#64748b; margin-left:8px;">{{ port_slots.port_name }} — {{ port_slots.occupied }}/{{ port_slots.capacity }} in use</span>
+        </div>
+        <div class="port-slots-grid">
+            {% for n in range(1, port_slots.capacity + 1) %}
+            {% set occ = port_slots.slots | selectattr('slot_number', 'equalto', n) | list %}
+            <span class="port-slot-pill {% if occ %}busy{% else %}free{% endif %}">
+                #{{ n }}{% if occ %} · {{ occ[0].driver_name.split(' ')[0] }}{% else %} · free{% endif %}
+            </span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if inbound_vessels %}
+    <div class="inbound-panel">
+        <h3>Incoming Vessels</h3>
+        <div class="inbound-list">
+            {% for v in inbound_vessels %}
+            <div class="inbound-chip">
+                <strong>{{ v.vessel_name }}</strong>
+                <span class="eta">{{ v.tracking_status }} · ETA {{ v.eta_display or 'TBC' }} · {{ v.speed_knots or 0 }} kn</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="table-card">
+        <table>
+            <thead>
+                <tr>
+                    <th>Container ID</th>
+                    <th>Vessel Target Identity</th>
+                    <th>LFD Timestamp</th>
+                    <th>Live Rolling Countdown</th>
+                    <th>Escalation State Queue</th>
+                    <th>Driver ETA</th>
+                    <th>Action Allocation Trigger</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in containers %}
+                <tr id="row-{{ row.container_number }}">
+                    <td><strong>{{ row.container_number }}</strong></td>
+                    <td>{{ row.vessel_name }}</td>
+                    <td>{{ row.lfd_datetime }}</td>
+                    <td>
+                        <span id="timer-{{ row.container_number }}" class="live-timer" data-target="{{ row.lfd_iso_string }}">
+                            Syncing...
+                        </span>
+                    </td>
+                    <td>
+                        <span id="badge-{{ row.container_number }}" class="badge status-{{ row.alert_status | replace(' ', '-') }}">
+                            {{ row.alert_status }}
+                        </span>
+                    </td>
+                    <td>
+                        <span id="eta-{{ row.container_number }}" class="eta-cell">
+                            {% if row.eta_minutes is not none %}~{{ row.eta_minutes }} min{% elif row.alert_status == 'AT WAREHOUSE' %}At warehouse{% elif row.alert_status == 'AT PORT' %}At port{% else %}—{% endif %}
+                        </span>
+                    </td>
+                    <td id="action-{{ row.container_number }}">
+                        {% if row.current_dispatch_status == 'At Warehouse' %}
+                            <button class="btn" onclick="openPodModal('{{ row.container_number }}')">Complete POD</button>
+                        {% elif row.current_dispatch_status == 'Dispatched' and not row.assigned_driver_id %}
+                            <button class="btn btn-danger" onclick="openPodModal('{{ row.container_number }}')">Confirm Emergency Delivery</button>
+                        {% elif row.current_dispatch_status == 'Dispatched' and not row.accepted_at %}
+                            <span class="action-hint">Awaiting driver acceptance{% if row.driver_name %} ({{ row.driver_name }}){% endif %}</span>
+                        {% elif row.current_dispatch_status == 'Dispatched' and row.alert_status == 'SLOT WAIT' %}
+                            <span class="action-hint">Driver accepted — waiting for port slot{% if row.driver_name %} ({{ row.driver_name }}){% endif %}</span>
+                        {% elif row.current_dispatch_status == 'Dispatched' and row.alert_status == 'TO PORT' %}
+                            <span class="action-hint">En route to port pickup{% if row.driver_name %} — {{ row.driver_name }}{% endif %}</span>
+                        {% elif row.current_dispatch_status == 'Dispatched' and row.alert_status == 'TO WAREHOUSE' %}
+                            <span class="action-hint">Container loaded — to warehouse{% if row.driver_name %} — {{ row.driver_name }}{% endif %}</span>
+                        {% elif row.current_dispatch_status == 'Dispatched' %}
+                            <span class="action-hint">In progress{% if row.driver_name %} — {{ row.driver_name }}{% endif %}</span>
+                        {% elif row.current_dispatch_status == 'Pending' %}
+                            <button class="btn" id="btn-{{ row.container_number }}" onclick="simulateDispatch('{{ row.container_number }}')">
+                                Instant Allocate
+                            </button>
+                        {% else %}
+                            <span class="action-hint">—</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<div id="pod-modal" class="modal-overlay">
+    <div class="modal-card">
+        <h3 style="color: var(--primary);">Proof of Delivery</h3>
+        <p>Container <strong id="pod-container-id"></strong> — sign below to complete expunge.</p>
+        <canvas id="pod-canvas" width="400" height="140"></canvas>
+        <input type="text" id="pod-note" class="pod-note" placeholder="Delivery notes (optional)">
+        <div class="modal-actions">
+            <button onclick="closePodModal()" class="btn btn-secondary">Cancel</button>
+            <button onclick="submitPod()" class="btn">Confirm &amp; Expunge</button>
+        </div>
+    </div>
+</div>
+
+<div id="dss-modal" class="modal-overlay">
+    <div class="modal-card">
+        <h3 id="modal-title">⚠️ INTERNAL FLEET RESOURCES EXHAUSTED</h3>
+        <p id="modal-message">No operational drivers are available.</p>
+        <p id="modal-shift-hint" class="modal-hint" style="display:none;"></p>
+        
+        <div class="financial-grid">
+            <div class="financial-row" style="font-size: 12px; color: #64748b; margin-bottom: 12px;">
+                <span>Demurrage grace period:</span>
+                <span id="grace-period-note">48h after vessel discharge</span>
+            </div>
+            <div class="financial-row">
+                <span>Projected Port Store Rent (post-LFD):</span>
+                <span id="cost-store-rent" style="color: var(--color-red); font-weight: bold;">$0.00</span>
+            </div>
+            <div class="financial-row">
+                <span>Projected Carrier Demurrage (post-grace):</span>
+                <span id="cost-demurrage" style="color: var(--color-red); font-weight: bold;">$0.00</span>
+            </div>
+            <div class="financial-row">
+                <span>Combined Port Exposure:</span>
+                <span id="cost-total" style="color: var(--color-red); font-weight: bold;">$0.00</span>
+            </div>
+            <div class="financial-row">
+                <span>Ad-hoc Emergency Driver Fee:</span>
+                <span id="cost-emergency" style="font-weight: bold;">$0.00</span>
+            </div>
+            <div class="financial-total">
+                <span>DSS Strategic Action Recommendation:</span>
+                <span id="dss-advice" style="padding: 2px 6px; border-radius: 4px; color: white;"></span>
+            </div>
+        </div>
+        
+        <div class="modal-actions">
+            <button onclick="closeModal()" class="btn btn-secondary">Defer (Hold)</button>
+            <button id="modal-confirm-btn" class="btn btn-danger">Authorize Emergency Hire</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// -------------------------------------------------------------
+// LIVE COUNTDOWN ROLLING TICKER LOGIC
+// -------------------------------------------------------------
+function updateRollingTimers() {
+    const timers = document.querySelectorAll('.live-timer');
+    
+    timers.forEach(timer => {
+        const containerNum = timer.id.replace('timer-', '');
+        const badge = document.getElementById(`badge-${containerNum}`);
+        
+        // Relinquish clock loop if button was selected and row entered ONGOING loop
+        if (badge && (badge.innerText.includes("ONGOING") || badge.innerText.includes("EXPUNGED") || badge.innerText.includes("AT PORT") || badge.innerText.includes("AWAITING"))) {
+            return;
+        }
+
+        const targetIsoStr = timer.getAttribute('data-target');
+        if (!targetIsoStr) return;
+
+        const targetDate = new Date(targetIsoStr);
+        const now = new Date();
+        const timeDiffMs = targetDate - now;
+
+        if (timeDiffMs <= 0) {
+            timer.innerText = "0h 0m 0s (BREACHED)";
+            if(badge) {
+                badge.className = "badge status-RED";
+                badge.innerText = "RED";
+            }
+            return;
+        }
+
+        const totalSeconds = Math.floor(timeDiffMs / 1000);
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        
+        timer.innerText = `${hours}h ${minutes}m ${seconds}s`;
+
+        // Real-time Traffic Light Threshold Logic Mapping
+        if (badge) {
+            if (hours < 12) {
+                badge.className = "badge status-RED";
+                badge.innerText = "RED";
+            } else if (hours < 24) {
+                badge.className = "badge status-YELLOW";
+                badge.innerText = "YELLOW";
+            } else {
+                badge.className = "badge status-GREEN";
+                badge.innerText = "GREEN";
+            }
+        }
+    });
+}
+
+setInterval(updateRollingTimers, 1000);
+window.addEventListener('load', updateRollingTimers);
+
+// -------------------------------------------------------------
+// DISPATCH & DSS ALLOCATION ACTIONS
+// -------------------------------------------------------------
+function simulateDispatch(cNum) {
+    fetch('/api/dispatch/check-availability', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ container_number: cNum })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === "available") {
+            executeStandardAllocation(cNum);
+        } else {
+            openModal(cNum, data);
+        }
+    });
+}
+
+function executeStandardAllocation(cNum) {
+    const badge = document.getElementById(`badge-${cNum}`);
+    badge.className = "badge status-AWAITING";
+    badge.innerText = "AWAITING";
+    
+    if(document.getElementById(`btn-${cNum}`)) {
+        document.getElementById(`btn-${cNum}`).disabled = true;
+    }
+
+    fetch('/api/dispatch/allocate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ container_number: cNum })
+    })
+    .then(response => {
+        if (response.status === 409) {
+            badge.className = "badge status-RED";
+            badge.innerText = "RED";
+            if(document.getElementById(`btn-${cNum}`)) {
+                document.getElementById(`btn-${cNum}`).disabled = false;
+            }
+            return fetch('/api/dispatch/check-availability', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ container_number: cNum })
+            }).then(r => r.json()).then(data => openModal(cNum, data));
+        }
+        return response.json().then(data => {
+            updateActionCell(cNum, {
+                dispatch_status: 'Dispatched',
+                accepted: false,
+                driver_name: data.driver_name,
+                can_expunge: false,
+            });
+            refreshDispatchState();
+        });
+    });
+}
+
+function openModal(cNum, data) {
+    document.getElementById('modal-title').innerText = '⚠️ ' + (data.modal_title || 'INTERNAL FLEET RESOURCES EXHAUSTED');
+    const baseMsg = data.modal_message || 'No operational drivers are available. Emergency dispatch can proceed immediately.';
+    document.getElementById('modal-message').innerHTML =
+        baseMsg + ' Container: <strong>' + cNum + '</strong>.';
+
+    const shiftHint = document.getElementById('modal-shift-hint');
+    if (data.next_shift_hint) {
+        shiftHint.innerText = data.next_shift_hint;
+        shiftHint.style.display = 'block';
+    } else {
+        shiftHint.style.display = 'none';
+    }
+
+    document.getElementById('cost-store-rent').innerText = `$${data.projected_store_rent.toFixed(2)}`;
+    document.getElementById('cost-demurrage').innerText = `$${data.projected_demurrage.toFixed(2)}`;
+    document.getElementById('cost-total').innerText = `$${data.projected_total.toFixed(2)}`;
+    document.getElementById('cost-emergency').innerText = `$${data.emergency_cost.toFixed(2)}`;
+    document.getElementById('grace-period-note').innerText = `${data.grace_period_hours}h after vessel discharge`;
+    
+    const adviceBox = document.getElementById('dss-advice');
+    if (data.financial_recommendation === "PROCEED") {
+        adviceBox.innerText = "HIRE FLEET (Saves Cost)";
+        adviceBox.style.backgroundColor = "var(--color-green)";
+    } else {
+        adviceBox.innerText = "HOLD OPERATION";
+        adviceBox.style.backgroundColor = "var(--color-yellow)";
+    }
+    
+    document.getElementById('modal-confirm-btn').onclick = () => {
+        closeModal();
+        executeEmergencyAllocation(cNum);
+    };
+    document.getElementById('dss-modal').style.display = 'flex';
+}
+
+function closeModal() {
+    document.getElementById('dss-modal').style.display = 'none';
+}
+
+function executeEmergencyAllocation(cNum) {
+    const badge = document.getElementById(`badge-${cNum}`);
+    badge.className = "badge status-EMERGENCY";
+    badge.innerText = "EMERGENCY";
+    
+    if(document.getElementById(`btn-${cNum}`)) {
+        document.getElementById(`btn-${cNum}`).disabled = true;
+    }
+
+    fetch('/api/dispatch/allocate-emergency', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ container_number: cNum })
+    }).then(r => r.json()).then(data => {
+        if (data.port_slots) applyPortSlots(data.port_slots);
+        refreshDispatchState();
+    });
+}
+
+function applyPortSlots(status) {
+    const bar = document.querySelector('.port-slots-bar');
+    if (!bar || !status) return;
+    const label = bar.querySelector('span[style*="font-size:13px"]');
+    if (label) label.textContent = `${status.port_name} — ${status.occupied}/${status.capacity} in use`;
+    const grid = bar.querySelector('.port-slots-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    for (let n = 1; n <= status.capacity; n++) {
+        const occ = status.slots.find(s => s.slot_number === n);
+        const pill = document.createElement('span');
+        pill.className = 'port-slot-pill ' + (occ ? 'busy' : 'free');
+        pill.textContent = occ
+            ? `Slot ${n} · ${occ.driver_name.split(' ')[0]}`
+            : `Slot ${n} · Free`;
+        grid.appendChild(pill);
+    }
+}
+
+function refreshPortSlots() {
+    fetch('/api/port/slots').then(r => r.json()).then(applyPortSlots);
+}
+
+function updateActionCell(cNum, info) {
+    const cell = document.getElementById(`action-${cNum}`);
+    if (!cell) return;
+    if (info.can_expunge) {
+        const isEmergency = !info.driver_name && info.dispatch_status === 'Dispatched';
+        const label = isEmergency ? 'Confirm Emergency Delivery' : 'Complete POD';
+        const cls = isEmergency ? 'btn btn-danger' : 'btn';
+        cell.innerHTML = `<button class="${cls}" onclick="openPodModal('${cNum}')">${label}</button>`;
+    } else if (info.dispatch_status === 'Dispatched' && !info.accepted) {
+        const who = info.driver_name ? ` (${info.driver_name})` : '';
+        cell.innerHTML = `<span class="action-hint">Awaiting driver acceptance${who}</span>`;
+    } else if (info.dispatch_status === 'Dispatched' && info.accepted && !info.slot_booked && !info.picked_up) {
+        const who = info.driver_name ? ` (${info.driver_name})` : '';
+        cell.innerHTML = `<span class="action-hint">Waiting for port slot${who}</span>`;
+    } else if (info.dispatch_status === 'Dispatched' && info.accepted && !info.picked_up) {
+        const who = info.driver_name ? ` — ${info.driver_name}` : '';
+        cell.innerHTML = `<span class="action-hint">En route to port${who}</span>`;
+    } else if (info.dispatch_status === 'Dispatched' && info.accepted && info.picked_up) {
+        const who = info.driver_name ? ` — ${info.driver_name}` : '';
+        cell.innerHTML = `<span class="action-hint">To warehouse${who}</span>`;
+    } else if (info.dispatch_status === 'Dispatched') {
+        const who = info.driver_name ? ` — ${info.driver_name}` : '';
+        cell.innerHTML = `<span class="action-hint">Driver en route${who}</span>`;
+    }
+}
+
+function applyDispatchInfo(cNum, info) {
+    const badge = document.getElementById(`badge-${cNum}`);
+    const el = document.getElementById(`eta-${cNum}`);
+    if (info.alert_status && badge) {
+        badge.className = 'badge status-' + info.alert_status.replace(/ /g, '-');
+        badge.innerText = info.alert_status;
+    }
+    if (el) {
+        if (info.at_warehouse) el.innerText = 'At warehouse';
+        else if (info.at_port) el.innerText = 'At port';
+        else if (info.eta_minutes != null) {
+            const dest = info.picked_up ? 'warehouse' : 'port';
+            el.innerText = `~${info.eta_minutes} min → ${dest}`;
+        }
+        else if (info.dispatch_status === 'Pending') el.innerText = '—';
+    }
+    if (info.dispatch_status === 'Dispatched' || info.at_warehouse || info.can_expunge) {
+        updateActionCell(cNum, info);
+    }
+}
+
+function refreshDispatchState() {
+    fetch('/api/containers/etas').then(r => r.json()).then(data => {
+        Object.entries(data).forEach(([cNum, info]) => applyDispatchInfo(cNum, info));
+    });
+}
+
+let podContainer = null;
+let podDrawing = false;
+const podCanvas = () => document.getElementById('pod-canvas');
+const podCtx = () => podCanvas()?.getContext('2d');
+
+function openPodModal(cNum) {
+    podContainer = cNum;
+    document.getElementById('pod-container-id').innerText = cNum;
+    document.getElementById('pod-note').value = '';
+    const canvas = podCanvas();
+    const ctx = podCtx();
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    document.getElementById('pod-modal').style.display = 'flex';
+}
+
+function closePodModal() {
+    document.getElementById('pod-modal').style.display = 'none';
+    podContainer = null;
+}
+
+function initPodCanvas() {
+    const canvas = podCanvas();
+    if (!canvas) return;
+    const draw = (e) => {
+        if (!podDrawing) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = (e.clientX || e.touches[0].clientX) - rect.left;
+        const y = (e.clientY || e.touches[0].clientY) - rect.top;
+        podCtx().lineTo(x * (canvas.width / rect.width), y * (canvas.height / rect.height));
+        podCtx().stroke();
+    };
+    canvas.addEventListener('mousedown', (e) => { podDrawing = true; podCtx().beginPath(); draw(e); });
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', () => { podDrawing = false; });
+    canvas.addEventListener('touchstart', (e) => { e.preventDefault(); podDrawing = true; podCtx().beginPath(); draw(e); });
+    canvas.addEventListener('touchmove', (e) => { e.preventDefault(); draw(e); });
+    canvas.addEventListener('touchend', () => { podDrawing = false; });
+    podCtx().strokeStyle = '#1e3a8a';
+    podCtx().lineWidth = 2;
+}
+
+function submitPod() {
+    const cNum = podContainer;
+    const signature = podCanvas().toDataURL('image/png');
+    const note = document.getElementById('pod-note').value;
+    closePodModal();
+    const badge = document.getElementById(`badge-${cNum}`);
+    badge.innerText = "EXPUNGED";
+    fetch('/api/container/expunge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ container_number: cNum, pod_note: note, pod_signature: signature })
+    }).then(() => {
+        const row = document.getElementById(`row-${cNum}`);
+        if (row) {
+            row.classList.add('fade-out');
+            setTimeout(() => row.remove(), 600);
+        }
+    });
+}
+
+function refreshEtas() {
+    refreshDispatchState();
+}
+
+window.addEventListener('load', () => { initPodCanvas(); refreshDispatchState(); });
+setInterval(refreshDispatchState, 5000);
+</script>
+</body>
+</html>

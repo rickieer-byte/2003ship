@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Strategic ESS - Carrier Procurement Benchmarks</title>
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --primary-dark: #0f172a;
+            --bg-main: #f1f5f9;
+            --surface: #ffffff;
+            --text-dark: #334155;
+            --border: #e2e8f0;
+            --color-red: #ef4444;
+            --color-green: #10b981;
+        }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-dark);
+            margin: 0;
+            padding: 30px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            background: var(--surface);
+            padding: 20px 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        h1 { color: var(--primary); margin: 0; font-size: 24px; }
+        .kpi-row {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        .kpi-card {
+            flex: 1;
+            background: var(--surface);
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            border-left: 5px solid var(--primary);
+        }
+        .kpi-card.leakage {
+            border-left-color: var(--color-red);
+        }
+        .kpi-card h3 {
+            margin: 0 0 10px 0;
+            color: #64748b;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .kpi-card .value {
+            font-size: 32px;
+            font-weight: bold;
+            color: var(--primary-dark);
+        }
+        .table-card {
+            background: var(--surface);
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            overflow: hidden;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+        }
+        th {
+            background-color: var(--primary-dark);
+            color: white;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        .badge-alert {
+            background-color: #fee2e2;
+            color: #991b1b;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .badge-stable {
+            background-color: #dcfce7;
+            color: #166534;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 12px;
+        }
+        .back-link { color: var(--primary); text-decoration: none; font-weight: bold; }
+        .savings-banner {
+            background: linear-gradient(135deg, #065f46 0%, #10b981 100%);
+            color: white;
+            border-radius: 10px;
+            padding: 28px 32px;
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 24px;
+            box-shadow: 0 8px 20px rgba(16, 185, 129, 0.25);
+        }
+        .savings-banner h2 {
+            margin: 0 0 6px 0;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.9;
+        }
+        .savings-banner .total {
+            font-size: 42px;
+            font-weight: bold;
+            line-height: 1;
+        }
+        .savings-breakdown {
+            display: flex;
+            gap: 32px;
+            font-size: 14px;
+            opacity: 0.95;
+        }
+        .savings-breakdown strong { display: block; font-size: 20px; margin-top: 4px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <div>
+            <h1>Strategic ESS Manager Analytics</h1>
+            <span style="font-size: 13px; color:#64748b;">Carrier Reliability Benchmarking & Spillover Ledger</span>
+        </div>
+        <div><a href="/" class="back-link">← Operational Control Hub</a> · <a href="/drivers" class="back-link">Drivers</a> · <a href="/fleet" class="back-link">Manage Fleet</a></div>
+    </header>
+
+    <div class="savings-banner">
+        <div>
+            <h2>Fleet Performance Savings</h2>
+            <div class="total">${{ "{:,.2f}".format(savings.total_savings) }}</div>
+            <span style="font-size: 13px; opacity: 0.85;">Estimated value from on-time internal dispatches</span>
+        </div>
+        <div class="savings-breakdown">
+            <div>
+                Port fees averted
+                <strong>${{ "{:,.2f}".format(savings.fees_averted) }}</strong>
+            </div>
+            <div>
+                Emergency hires avoided
+                <strong>${{ "{:,.2f}".format(savings.emergency_savings) }}</strong>
+            </div>
+            <div>
+                On-time pickups
+                <strong>{{ savings.on_time_dispatches }}</strong>
+            </div>
+        </div>
+    </div>
+
+    <div class="kpi-row">
+        <div class="kpi-card leakage">
+            <h3>Total Premium Capital Leakage</h3>
+            <div class="value">${{ "{:,.2f}".format(total_leakage) }}</div>
+        </div>
+        <div class="kpi-card" style="border-left-color: #f59e0b;">
+            <h3>Accrued Port Store Rent</h3>
+            <div class="value">${{ "{:,.2f}".format(total_store_rent) }}</div>
+        </div>
+        <div class="kpi-card" style="border-left-color: var(--color-green);">
+            <h3>Accrued Carrier Demurrage</h3>
+            <div class="value">${{ "{:,.2f}".format(total_demurrage) }}</div>
+            <span style="font-size: 11px; color: #64748b;">After {{ grace_period_hours }}h post-discharge grace</span>
+        </div>
+    </div>
+
+    <div class="table-card">
+        <table>
+            <thead>
+                <tr>
+                    <th>Shipping Line Vessel</th>
+                    <th>Total Managed Freight Containers</th>
+                    <th>Bypass Emergency Hires Forced</th>
+                    <th>Premium Ad-hoc Loss</th>
+                    <th>Accrued Store Rent</th>
+                    <th>Accrued Demurrage</th>
+                    <th>Strategic Advisory Procurement Recommendation</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for r in benchmarks %}
+                <tr>
+                    <td><strong>{{ r.vessel_name }}</strong></td>
+                    <td>{{ r.total_dispatches }}</td>
+                    <td>{{ r.emergency_hires }}</td>
+                    <td style="color: var(--color-red); font-weight: bold;">${{ "{:,.2f}".format(r.total_extra_costs or 0) }}</td>
+                    <td>${{ "{:,.2f}".format(r.accumulated_store_rent or 0) }}</td>
+                    <td>${{ "{:,.2f}".format(r.accumulated_demurrage or 0) }}</td>
+                    <td>
+                        {% if r.emergency_hires >= 3 %}
+                            <span class="badge-alert">🔴 CRITICAL RISK: Renegotiate Terms</span>
+                        {% else %}
+                            <span class="badge-stable">🟢 PERFORMANCE STABLE: Pass Threshold</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+</body>
+</html>

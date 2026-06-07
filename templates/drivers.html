@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Drivers - Last Mile Logistics</title>
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --primary-dark: #0f172a;
+            --bg-main: #f4f6f9;
+            --surface: #ffffff;
+            --text-dark: #334155;
+            --border: #e5e7eb;
+            --color-green: #10b981;
+            --color-yellow: #f59e0b;
+            --color-red: #ef4444;
+            --color-blue: #3b82f6;
+        }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-dark);
+            margin: 0;
+            padding: 30px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header {
+            background: var(--surface);
+            padding: 20px 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        h1 { color: var(--primary); margin: 0; font-size: 24px; }
+        .nav-links a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: bold;
+            margin-left: 15px;
+        }
+        .nav-links a:hover { text-decoration: underline; }
+        .summary-row {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        .summary-card {
+            flex: 1;
+            background: var(--surface);
+            padding: 20px 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            border-left: 5px solid var(--primary);
+        }
+        .summary-card.available { border-left-color: var(--color-green); }
+        .summary-card.busy { border-left-color: var(--color-blue); }
+        .summary-card.offline { border-left-color: var(--color-red); }
+        .summary-card h3 {
+            margin: 0 0 8px 0;
+            font-size: 13px;
+            color: #64748b;
+            text-transform: uppercase;
+        }
+        .summary-card .value { font-size: 28px; font-weight: bold; }
+        .table-card {
+            background: var(--surface);
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            overflow: hidden;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th, td {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+        }
+        th {
+            background-color: var(--primary-dark);
+            color: white;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+        .badge {
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 11px;
+            display: inline-block;
+        }
+        .status-Available { background: #dcfce7; color: #166534; }
+        .status-On-Delivery { background: #dbeafe; color: #1e40af; }
+        .status-Offline { background: #fee2e2; color: #991b1b; }
+        .shift-yes { background: #dcfce7; color: #166534; }
+        .shift-no { background: #f1f5f9; color: #64748b; }
+        .hours-text { font-size: 13px; color: #64748b; }
+        .info-banner {
+            background: #eff6ff;
+            border: 1px solid #bfdbfe;
+            color: #1e40af;
+            padding: 14px 18px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <div>
+            <h1>Driver Roster</h1>
+            <span style="font-size: 13px; color:#64748b;">Live fleet availability for dispatch planning</span>
+        </div>
+        <div class="nav-links">
+            <a href="/">← Operations Hub</a>
+            <a href="/tracking">Live Map</a>
+            {% if role == 'Fleet Manager' %}
+                <a href="/fleet">Manage Fleet</a>
+            {% endif %}
+        </div>
+    </header>
+
+    <div class="info-banner">
+        Drivers marked <strong>Off Shift</strong> are not offered for standard dispatch.
+        Use <strong>Instant Allocate → Authorize Emergency Hire</strong> on the operations hub when no on-shift drivers are available.
+    </div>
+
+    {% set available = drivers | selectattr('current_status', 'equalto', 'Available') | selectattr('on_shift', 'equalto', true) | list | length %}
+    {% set on_delivery = drivers | selectattr('current_status', 'equalto', 'On Delivery') | list | length %}
+    {% set offline = drivers | rejectattr('on_shift', 'equalto', true) | rejectattr('current_status', 'equalto', 'On Delivery') | list | length %}
+
+    <div class="summary-row">
+        <div class="summary-card available">
+            <h3>Available (On Shift)</h3>
+            <div class="value">{{ available }}</div>
+        </div>
+        <div class="summary-card busy">
+            <h3>On Delivery</h3>
+            <div class="value">{{ on_delivery }}</div>
+        </div>
+        <div class="summary-card offline">
+            <h3>Off Shift / Offline</h3>
+            <div class="value">{{ offline }}</div>
+        </div>
+    </div>
+
+    <div class="table-card">
+        <table>
+            <thead>
+                <tr>
+                    <th>Driver ID</th>
+                    <th>Name</th>
+                    <th>Phone</th>
+                    <th>Today's Hours</th>
+                    <th>Shift</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in drivers %}
+                <tr>
+                    <td>#{{ d.driver_id }}</td>
+                    <td><strong>{{ d.driver_name }}</strong></td>
+                    <td>{{ d.phone_number }}</td>
+                    <td class="hours-text">{{ d.today_hours }}</td>
+                    <td>
+                        {% if d.on_shift %}
+                            <span class="badge shift-yes">On Shift</span>
+                        {% else %}
+                            <span class="badge shift-no">Off Shift</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge status-{{ d.current_status | replace(' ', '-') }}">{{ d.current_status }}</span>
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" style="text-align:center; color:#64748b;">No drivers registered in the fleet.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+</body>
+</html>

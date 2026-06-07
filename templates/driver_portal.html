@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+
+    <meta name="theme-color" content="#1e3a8a">
+
+    <link rel="manifest" href="/static/manifest.json">
+
+    <title>{{ driver.driver_name }} — Driver Portal</title>
+
+    <style>
+
+        body { font-family: 'Segoe UI', sans-serif; background: #f4f6f9; margin: 0; padding: 16px; padding-bottom: 80px; }
+
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+
+        h1 { font-size: 20px; color: #1e3a8a; margin: 0; }
+
+        .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+
+        .card h2 { margin: 0 0 12px; font-size: 16px; color: #0f172a; }
+
+        .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+
+        .badge-busy { background: #dbeafe; color: #1e40af; }
+
+        .badge-free { background: #dcfce7; color: #166534; }
+
+        .btn { display: block; width: 100%; padding: 14px; margin-top: 10px; border: none; border-radius: 8px; font-size: 15px; font-weight: bold; cursor: pointer; }
+
+        .btn-primary { background: #1e3a8a; color: white; }
+
+        .btn-gps { background: #10b981; color: white; }
+
+        .btn-accept { background: #f59e0b; color: white; }
+
+        .btn-slot { background: #7c3aed; color: white; }
+
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .meta { color: #64748b; font-size: 14px; line-height: 1.6; }
+
+        .logout { color: #64748b; font-size: 13px; }
+
+        #gps-status, #slot-status { font-size: 13px; color: #64748b; margin-top: 8px; }
+
+        .slot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+
+        .slot-chip { text-align: center; padding: 10px 6px; border-radius: 8px; font-size: 12px; font-weight: bold; border: 2px solid #e2e8f0; background: #f8fafc; color: #64748b; }
+
+        .slot-chip.occupied { border-color: #fca5a5; background: #fef2f2; color: #b91c1c; }
+
+        .slot-chip.mine { border-color: #86efac; background: #dcfce7; color: #166534; }
+
+        .slot-chip.free { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
+
+        .step { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; font-size: 13px; }
+
+        .step-num { width: 22px; height: 22px; border-radius: 50%; background: #e2e8f0; color: #475569; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; flex-shrink: 0; }
+
+        .step-num.done { background: #dcfce7; color: #166534; }
+
+        .step-num.active { background: #dbeafe; color: #1e40af; }
+
+    </style>
+
+</head>
+
+<body>
+
+    <header>
+
+        <div>
+
+            <h1>{{ driver.driver_name }}</h1>
+
+            <span class="badge {{ 'badge-busy' if driver.current_status == 'On Delivery' else 'badge-free' }}">{{ driver.current_status }}</span>
+
+        </div>
+
+        <a href="/driver/logout" class="logout">Sign out</a>
+
+    </header>
+
+
+
+    {% if active_job %}
+
+    <div class="card">
+
+        <h2>Active Job</h2>
+
+        <div class="step"><span class="step-num {{ 'done' if active_job.accepted_at else 'active' }}">1</span><span><strong>Accept assignment</strong>{% if active_job.accepted_at %} — done{% endif %}</span></div>
+
+        <div class="step"><span class="step-num {% if active_job.port_slot_number %}done{% elif active_job.accepted_at %}active{% endif %}">2</span><span><strong>Book port prime-mover slot</strong>{% if active_job.port_slot_number %} — slot {{ active_job.port_slot_number }}{% endif %}</span></div>
+
+        <div class="step"><span class="step-num {% if active_job.picked_up_at %}done{% elif active_job.port_slot_number %}active{% endif %}">3</span><span><strong>Pick up at {{ map_port.label }}</strong>{% if active_job.picked_up_at %} — loaded (slot freed){% endif %}</span></div>
+
+        <div class="step"><span class="step-num {% if active_job.at_warehouse %}done{% elif active_job.picked_up_at %}active{% endif %}">4</span><span><strong>Deliver to {{ map_warehouse.label }}</strong>{% if active_job.at_warehouse %} — arrived{% endif %}</span></div>
+
+
+
+        <p class="meta" style="margin-top:14px;">
+
+            <strong>{{ active_job.container_number }}</strong><br>
+
+            Vessel: {{ active_job.vessel_name }}<br>
+
+            LFD: {{ active_job.lfd_datetime }}<br>
+
+            Status: {{ active_job.dispatch_status }}{% if active_job.at_warehouse %} · at warehouse{% elif active_job.picked_up_at %} · en route to warehouse{% elif active_job.port_slot_number %} · en route to port{% endif %}
+
+        </p>
+
+
+
+        {% if not active_job.accepted_at %}
+
+        <button class="btn btn-accept" onclick="acceptJob('{{ active_job.container_number }}')">Accept Job</button>
+
+        {% elif not active_job.port_slot_number %}
+
+        <p class="meta" style="color:#166534;">Accepted — book a port slot, then drive to the port for pickup.</p>
+
+        <button class="btn btn-slot" id="book-slot-btn" onclick="bookPortSlot()">Check &amp; Book Port Slot</button>
+
+        <div id="slot-status"></div>
+
+        {% elif not active_job.picked_up_at %}
+
+        <p class="meta" style="color:#166534;">Slot {{ active_job.port_slot_number }} booked — head to <strong>{{ map_port.label }}</strong> to load the container. Your slot frees when you leave.</p>
+
+        {% elif not active_job.at_warehouse %}
+
+        <p class="meta" style="color:#166534;">Container loaded — drive to <strong>{{ map_warehouse.label }}</strong> for de-stuffing.</p>
+
+        {% else %}
+
+        <p class="meta" style="color:#166534;">At warehouse — dispatcher will complete POD.</p>
+
+        {% endif %}
+
+    </div>
+
+    {% else %}
+
+    <div class="card"><p class="meta">No active delivery assigned. Wait for dispatcher allocation.</p></div>
+
+    {% endif %}
+
+
+
+    <div class="card">
+
+        <h2>Port Prime-Mover Slots</h2>
+
+        <p class="meta">Tuas PSA mock gate — {{ port_slots.occupied }}/{{ port_slots.capacity }} slots in use.</p>
+
+        <div class="slot-grid">
+
+            {% for n in range(1, port_slots.capacity + 1) %}
+
+            {% set occupied = port_slots.slots | selectattr('slot_number', 'equalto', n) | list %}
+
+            <div class="slot-chip {% if active_job and active_job.port_slot_number == n %}mine{% elif occupied %}occupied{% else %}free{% endif %}">
+
+                Slot {{ n }}<br>
+
+                {% if active_job and active_job.port_slot_number == n %}Yours{% elif occupied %}{{ occupied[0].driver_name.split(' ')[0] }}{% else %}Free{% endif %}
+
+            </div>
+
+            {% endfor %}
+
+        </div>
+
+        <button class="btn btn-primary" style="margin-top:0;" onclick="refreshSlotStatus()">Refresh Slot Status</button>
+
+    </div>
+
+
+
+    <div class="card">
+
+        <h2>GPS Location</h2>
+
+        <p class="meta">
+
+            {% if simulation_mode %}
+
+            Simulation routes you port → warehouse after slot booking. Device GPS also works.
+
+            {% else %}
+
+            Share GPS after slot booking for port pickup (slot freed on exit) and warehouse arrival.
+
+            {% endif %}
+
+        </p>
+
+        <button class="btn btn-gps" onclick="shareLocation()" {% if active_job and not active_job.port_slot_number and not active_job.picked_up_at %}disabled title="Book a port slot first"{% endif %}>Share My Location</button>
+
+        <div id="gps-status"></div>
+
+    </div>
+
+
+
+<script>
+
+function acceptJob(cNum) {
+
+    fetch('/api/driver/accept', {
+
+        method: 'POST',
+
+        headers: { 'Content-Type': 'application/json' },
+
+        body: JSON.stringify({ container_number: cNum })
+
+    }).then(r => r.json()).then(data => {
+
+        if (data.status === 'success') location.reload();
+
+        else alert(data.message || 'Accept failed');
+
+    });
+
+}
+
+
+
+function bookPortSlot() {
+
+    const el = document.getElementById('slot-status');
+
+    const btn = document.getElementById('book-slot-btn');
+
+    if (btn) btn.disabled = true;
+
+    el.textContent = 'Checking port slot availability…';
+
+    fetch('/api/driver/port-slot/book', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+
+        .then(({ ok, data }) => {
+
+            if (ok) {
+
+                el.textContent = data.message;
+
+                setTimeout(() => location.reload(), 1200);
+
+            } else {
+
+                el.textContent = data.message || 'No slots available — try again shortly.';
+
+                if (btn) btn.disabled = false;
+
+            }
+
+        });
+
+}
+
+
+
+function refreshSlotStatus() {
+
+    fetch('/api/driver/port-slot/check')
+
+        .then(r => r.json())
+
+        .then(data => {
+
+            const el = document.getElementById('slot-status');
+
+            if (el) el.textContent = `${data.occupied}/${data.capacity} slots used — ${data.available} available`;
+
+            else location.reload();
+
+        });
+
+}
+
+
+
+function shareLocation() {
+
+    const status = document.getElementById('gps-status');
+
+    if (!navigator.geolocation) {
+
+        status.textContent = 'Geolocation not supported on this device.';
+
+        return;
+
+    }
+
+    status.textContent = 'Acquiring GPS fix…';
+
+    navigator.geolocation.getCurrentPosition(pos => {
+
+        fetch('/api/driver/location', {
+
+            method: 'POST',
+
+            headers: { 'Content-Type': 'application/json' },
+
+            body: JSON.stringify({
+
+                latitude: pos.coords.latitude,
+
+                longitude: pos.coords.longitude,
+
+                speed_kph: (pos.coords.speed || 0) * 3.6,
+
+                heading: pos.coords.heading || 0
+
+            })
+
+        }).then(r => r.json()).then(data => {
+
+            status.textContent = `Updated ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}` +
+
+                (data.port_pickups ? ' — container loaded at port (slot freed)!' : '') +
+
+                (data.warehouse_arrivals ? ' — arrived at warehouse!' : '');
+
+            if (data.port_pickups || data.warehouse_arrivals) setTimeout(() => location.reload(), 1500);
+
+        });
+
+    }, err => { status.textContent = 'GPS error: ' + err.message; }, { enableHighAccuracy: true });
+
+}
+
+
+
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/static/sw.js');
+
+</script>
+
+</body>
+
+</html>
+

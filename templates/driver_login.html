@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <meta name="theme-color" content="#1e3a8a">
+    <link rel="manifest" href="/static/manifest.json">
+    <title>Driver Login</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f4f6f9; margin: 0; padding: 24px; }
+        .card { max-width: 400px; margin: 40px auto; background: white; padding: 28px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+        h1 { color: #1e3a8a; margin: 0 0 8px; font-size: 22px; }
+        p { color: #64748b; font-size: 14px; margin-bottom: 20px; }
+        label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #475569; }
+        select, input { width: 100%; padding: 12px; margin-bottom: 16px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 16px; }
+        button { width: 100%; padding: 14px; background: #1e3a8a; color: white; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; }
+        .flash { background: #fee2e2; color: #991b1b; padding: 10px; border-radius: 6px; margin-bottom: 16px; font-size: 14px; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h1>Driver App</h1>
+    <p>Verify with the last 4 digits of your registered mobile number.</p>
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}{% for m in messages %}<div class="flash">{{ m }}</div>{% endfor %}{% endif %}
+    {% endwith %}
+    <form action="/driver/login" method="POST">
+        <label>Driver</label>
+        <select name="driver_id" required>
+            {% for d in drivers %}
+            <option value="{{ d.driver_id }}">{{ d.driver_name }} ({{ d.current_status }})</option>
+            {% endfor %}
+        </select>
+        <label>Last 4 digits of phone</label>
+        <input type="text" name="phone_tail" maxlength="4" pattern="[0-9]{4}" placeholder="4567" required inputmode="numeric">
+        <button type="submit">Sign In</button>
+    </form>
+</div>
+<script>if ('serviceWorker' in navigator) navigator.serviceWorker.register('/static/sw.js');</script>
+</body>
+</html>

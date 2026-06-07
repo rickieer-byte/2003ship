@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Tracking - GPS &amp; Vessel AIS</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --surface: #ffffff;
+            --bg-main: #f4f6f9;
+            --text-dark: #334155;
+            --color-green: #10b981;
+            --color-blue: #3b82f6;
+            --color-red: #ef4444;
+        }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            margin: 0;
+            background: var(--bg-main);
+            color: var(--text-dark);
+        }
+        header {
+            background: var(--surface);
+            padding: 16px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        h1 { margin: 0; font-size: 20px; color: var(--primary); }
+        .nav a { color: var(--primary); font-weight: bold; text-decoration: none; margin-left: 16px; }
+        .layout {
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            gap: 0;
+            height: calc(100vh - 64px);
+        }
+        #map { width: 100%; height: 100%; }
+        .sidebar {
+            background: var(--surface);
+            border-left: 1px solid #e2e8f0;
+            overflow-y: auto;
+            padding: 16px;
+        }
+        .sidebar h3 {
+            margin: 0 0 12px;
+            font-size: 12px;
+            text-transform: uppercase;
+            color: #64748b;
+            letter-spacing: 0.5px;
+        }
+        .feed-item {
+            padding: 10px 12px;
+            border-radius: 6px;
+            background: #f8fafc;
+            margin-bottom: 8px;
+            font-size: 13px;
+            border-left: 3px solid #cbd5e1;
+        }
+        .feed-item.driver-available { border-left-color: var(--color-green); }
+        .feed-item.driver-delivery { border-left-color: var(--color-blue); }
+        .feed-item.vessel { border-left-color: var(--primary); }
+        .feed-item strong { display: block; margin-bottom: 4px; }
+        .meta { color: #64748b; font-size: 12px; }
+        .legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            font-size: 12px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        .dot {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 4px;
+        }
+        .status-bar {
+            font-size: 12px;
+            color: #64748b;
+            padding: 8px 24px;
+            background: #eff6ff;
+            border-bottom: 1px solid #bfdbfe;
+        }
+        .btn-tick {
+            background: var(--primary);
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        @media (max-width: 900px) {
+            .layout { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+            .sidebar { max-height: 240px; border-left: none; border-top: 1px solid #e2e8f0; }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <h1>Live Fleet &amp; Vessel Tracking</h1>
+            <span style="font-size:12px;color:#64748b;">Simulated GPS + PortNet AIS (demo telemetry)</span>
+        </div>
+        <div class="nav">
+            <a href="/">Operations Hub</a>
+            <a href="/drivers">Drivers</a>
+            {% if role == 'Fleet Manager' %}
+            <button class="btn-tick" onclick="manualTick()">Advance Simulation</button>
+            {% endif %}
+        </div>
+    </header>
+    <div class="status-bar" id="status-bar">Loading telemetry…</div>
+    <div class="layout">
+        <div id="map"></div>
+        <div class="sidebar">
+            <div class="legend">
+                <span><span class="dot" style="background:#10b981"></span>Driver available</span>
+                <span><span class="dot" style="background:#3b82f6"></span>On delivery</span>
+                <span><span class="dot" style="background:#1e3a8a"></span>Vessel</span>
+                <span><span class="dot" style="background:#f59e0b"></span>Warehouse</span>
+                <span><span class="dot" style="background:#ef4444"></span>Port / depot</span>
+            </div>
+            <h3>Drivers</h3>
+            <div id="driver-feed"></div>
+            <h3 style="margin-top:20px;">Incoming Vessels</h3>
+            <div id="vessel-feed"></div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([1.315, 103.67], 12);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 18,
+            attribution: '&copy; OpenStreetMap'
+        }).addTo(map);
+
+        const layers = { drivers: L.layerGroup().addTo(map), vessels: L.layerGroup().addTo(map), sites: L.layerGroup().addTo(map) };
+        const port = {{ map_port | tojson }};
+        const depot = {{ map_depot | tojson }};
+        const warehouse = {{ map_warehouse | tojson }};
+
+        L.marker([port.lat, port.lng], { title: port.label })
+            .bindPopup('<strong>' + port.label + '</strong>')
+            .addTo(layers.sites);
+        L.marker([warehouse.lat, warehouse.lng], { title: warehouse.label })
+            .bindPopup('<strong>' + warehouse.label + '</strong><br><em>De-stuff / delivery yard</em>')
+            .addTo(layers.sites);
+        L.marker([depot.lat, depot.lng], { title: depot.label })
+            .bindPopup('<strong>' + depot.label + '</strong>')
+            .addTo(layers.sites);
+
+        function driverColor(status) {
+            if (status === 'On Delivery') return '#3b82f6';
+            if (status === 'Available') return '#10b981';
+            return '#94a3b8';
+        }
+
+        function vesselLabel(status) {
+            const labels = { 'At Sea': '🚢 At sea', 'Approaching': '⚓ Approaching', 'Berthing': '🏗 Berthing', 'At Berth': '✅ At berth' };
+            return labels[status] || status;
+        }
+
+        function refreshTelemetry() {
+            fetch('/api/telemetry/live')
+                .then(r => r.json())
+                .then(data => {
+                    layers.drivers.clearLayers();
+                    layers.vessels.clearLayers();
+
+                    let driverHtml = '';
+                    data.drivers.forEach(d => {
+                        const color = driverColor(d.current_status);
+                        L.circleMarker([d.latitude, d.longitude], {
+                            radius: 9, color: '#fff', weight: 2, fillColor: color, fillOpacity: 0.9
+                        }).bindPopup(`<strong>${d.driver_name}</strong><br>${d.current_status}<br>${d.speed_kph} km/h · hdg ${d.heading}°`)
+                          .addTo(layers.drivers);
+                        driverHtml += `<div class="feed-item driver-${d.current_status === 'On Delivery' ? 'delivery' : 'available'}">
+                            <strong>${d.driver_name}</strong>
+                            <span class="meta">${d.current_status} · ${d.speed_kph} km/h</span>
+                        </div>`;
+                    });
+                    document.getElementById('driver-feed').innerHTML = driverHtml || '<p class="meta">No GPS fix yet.</p>';
+
+                    let vesselHtml = '';
+                    data.vessels.forEach(v => {
+                        L.circleMarker([v.latitude, v.longitude], {
+                            radius: 11, color: '#fff', weight: 2, fillColor: '#1e3a8a', fillOpacity: 0.85
+                        }).bindPopup(`<strong>${v.vessel_name}</strong><br>${v.tracking_status}<br>ETA ${v.eta_iso || 'TBC'}`)
+                          .addTo(layers.vessels);
+                        vesselHtml += `<div class="feed-item vessel">
+                            <strong>${v.vessel_name}</strong>
+                            <span class="meta">${vesselLabel(v.tracking_status)} · ${v.speed_knots} kn · ETA ${v.eta_iso || '—'}</span>
+                        </div>`;
+                    });
+                    document.getElementById('vessel-feed').innerHTML = vesselHtml || '<p class="meta">No vessels on scope.</p>';
+
+                    const simNote = data.simulation_mode ? 'Simulated telemetry · ' : '';
+                    const tickNote = data.simulation_tick ? ' · tick advanced' : '';
+                    document.getElementById('status-bar').textContent =
+                        simNote + 'Last refresh ' + new Date(data.refreshed_at).toLocaleTimeString() + tickNote + ' · every 15s';
+                });
+        }
+
+        function manualTick() {
+            fetch('/api/simulation/tick', { method: 'POST' })
+                .then(r => r.json())
+                .then(() => refreshTelemetry());
+        }
+
+        refreshTelemetry();
+        setInterval(refreshTelemetry, 15000);
+    </script>
+</body>
+</html>

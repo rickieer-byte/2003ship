@@ -1,0 +1,6 @@
+Flask
+flask-mysqldb
+PyJWT
+Werkzeug
+python-dotenv
+mysqlclient

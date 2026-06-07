@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fleet Control - Digital Process Architecture</title>
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --primary-dark: #0f172a;
+            --bg-main: #f4f6f9;
+            --surface: #ffffff;
+            --text-dark: #334155;
+            --border: #e5e7eb;
+            --color-green: #10b981;
+            --color-red: #ef4444;
+            --color-blue: #3b82f6;
+        }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-dark);
+            margin: 0;
+            padding: 30px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        header {
+            background: var(--surface);
+            padding: 20px 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        h1 { color: var(--primary); margin: 0; font-size: 24px; }
+        .card {
+            background: var(--surface);
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 25px;
+        }
+        .card h3 { margin-top: 0; color: var(--primary-dark); border-bottom: 2px solid var(--bg-main); padding-bottom: 10px; }
+        .form-inline {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        input, select {
+            padding: 10px 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            font-size: 14px;
+            background: white;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border);
+            text-align: left;
+        }
+        th {
+            background-color: var(--primary-dark);
+            color: white;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 13px;
+            color: white;
+        }
+        .btn-add { background: var(--color-green); }
+        .btn-update { background: var(--color-blue); }
+        .btn-delete { background: var(--color-red); }
+        .btn-schedule { background: #6366f1; }
+        .back-link { color: var(--primary); text-decoration: none; font-weight: bold; }
+        .back-link:hover { text-decoration: underline; }
+        .schedule-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+        }
+        .schedule-card {
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            background: #f8fafc;
+        }
+        .schedule-card h4 {
+            margin: 0 0 12px 0;
+            color: var(--primary-dark);
+            font-size: 15px;
+        }
+        .day-row {
+            display: grid;
+            grid-template-columns: 36px 18px 1fr 1fr;
+            gap: 8px;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        .day-row label { font-weight: 600; color: #475569; }
+        .day-row input[type="time"] {
+            padding: 4px 6px;
+            font-size: 12px;
+            width: 100%;
+        }
+        .day-row input[type="checkbox"] { width: 16px; height: 16px; }
+        .schedule-card .btn { width: 100%; margin-top: 10px; }
+        .hint { font-size: 12px; color: #64748b; margin-bottom: 16px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <div>
+            <h1>Fleet Asset Management</h1>
+            <span style="font-size: 13px; color:#64748b;">3NF Normalized Asset Directory Control</span>
+        </div>
+        <div><a href="/" class="back-link">← Operational Control Hub</a> · <a href="/drivers" class="back-link">Drivers</a></div>
+    </header>
+
+    {% with messages = get_flashed_messages() %}
+        {% if messages %}{% for m in messages %}<div style="padding:12px; background:#dcfce7; color:#166534; border-radius:4px; margin-bottom:20px; font-size:14px;">{{ m }}</div>{% endfor %}{% endif %}
+    {% endwith %}
+
+    <div class="card">
+        <h3>Provision New Fleet Driver</h3>
+        <form action="/fleet/add" method="POST" class="form-inline">
+            <input type="text" name="driver_name" placeholder="Driver Full Name" required style="flex:2;">
+            <input type="text" name="phone_number" placeholder="Mobile Terminal Number" required style="flex:1;">
+            <button type="submit" class="btn btn-add">+ Add Asset</button>
+        </form>
+    </div>
+
+    <div class="card" style="padding: 0; overflow: hidden;">
+        <table>
+            <thead>
+                <tr>
+                    <th>Asset ID</th>
+                    <th>Driver Name</th>
+                    <th>Contact Phone</th>
+                    <th>Status Allocation</th>
+                    <th>Management Functions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in drivers %}
+                <tr>
+                    <td>#{{ d.driver_id }}</td>
+                    <td><strong>{{ d.driver_name }}</strong></td>
+                    <form action="/fleet/update/{{ d.driver_id }}" method="POST">
+                        <td><input type="text" name="phone_number" value="{{ d.phone_number }}" required style="padding:5px; font-size:13px;"></td>
+                        <td>
+                            <select name="current_status" style="padding:5px; font-size:13px;">
+                                <option value="Available" {% if d.current_status == 'Available' %}selected{% endif %}>Available</option>
+                                <option value="On Delivery" {% if d.current_status == 'On Delivery' %}selected{% endif %}>On Delivery</option>
+                                <option value="Offline" {% if d.current_status == 'Offline' %}selected{% endif %}>Offline</option>
+                            </select>
+                        </td>
+                        <td>
+                            <button type="submit" class="btn btn-update" style="padding:5px 10px; font-size:12px;">Save</button>
+                    </form>
+                    <form action="/fleet/delete/{{ d.driver_id }}" method="POST" style="display:inline;">
+                        <button type="submit" class="btn btn-delete" style="padding:5px 10px; font-size:12px;" onclick="return confirm('Decommission driver asset permanently?');">Remove</button>
+                    </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h3>Driver Work Schedules</h3>
+        <p class="hint">Set shift hours per day. Drivers outside their scheduled hours won't be offered for standard dispatch — use emergency hire from the operations hub instead.</p>
+        <div class="schedule-grid">
+            {% for d in drivers %}
+            {% set days = schedule_map.get(d.driver_id, {}) %}
+            <div class="schedule-card">
+                <h4>{{ d.driver_name }}</h4>
+                <form action="/fleet/schedule/{{ d.driver_id }}" method="POST">
+                    {% for day in range(7) %}
+                    {% set entry = days.get(day) %}
+                    <div class="day-row">
+                        <label>{{ day_labels[day] }}</label>
+                        <input type="checkbox" name="day_{{ day }}_enabled" {% if entry %}checked{% endif %}>
+                        <input type="time" name="day_{{ day }}_start" value="{{ entry.shift_start if entry else '08:00' }}">
+                        <input type="time" name="day_{{ day }}_end" value="{{ entry.shift_end if entry else '17:00' }}">
+                    </div>
+                    {% endfor %}
+                    <button type="submit" class="btn btn-schedule">Save Schedule</button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+</body>
+</html>
