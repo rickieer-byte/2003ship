@@ -1,1 +1,13 @@
 .env
+db/migrate_job_rejections.sql
+services/__pycache__/__init__.cpython-314.pyc
+services/__pycache__/geo_utils.cpython-314.pyc
+services/__pycache__/geofence.cpython-314.pyc
+services/__pycache__/locations.cpython-314.pyc
+services/__pycache__/notifications.cpython-314.pyc
+services/__pycache__/port_slots.cpython-314.pyc
+services/__pycache__/report_export.cpython-314.pyc
+simulation/__pycache__/__init__.cpython-314.pyc
+simulation/__pycache__/engine.cpython-314.pyc
+__pycache__/app.cpython-314.pyc
+__pycache__/config.cpython-314.pyc

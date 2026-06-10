@@ -40,7 +40,23 @@
 
         .btn-accept { background: #f59e0b; color: white; }
 
+        .btn-reject { background: #fee2e2; color: #991b1b; }
+
         .btn-slot { background: #7c3aed; color: white; }
+
+        .btn-row { display: flex; gap: 10px; margin-top: 10px; }
+
+        .btn-row .btn { flex: 1; margin-top: 0; }
+
+        .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.6); z-index: 100; align-items: center; justify-content: center; padding: 16px; }
+
+        .modal-overlay.open { display: flex; }
+
+        .modal-card { background: white; border-radius: 12px; padding: 20px; width: 100%; max-width: 400px; }
+
+        .modal-card h3 { margin: 0 0 12px; color: #991b1b; font-size: 16px; }
+
+        .modal-card textarea { width: 100%; min-height: 100px; padding: 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-family: inherit; font-size: 14px; box-sizing: border-box; }
 
         .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -122,7 +138,10 @@
 
         {% if not active_job.accepted_at %}
 
-        <button class="btn btn-accept" onclick="acceptJob('{{ active_job.container_number }}')">Accept Job</button>
+        <div class="btn-row">
+            <button class="btn btn-accept" onclick="acceptJob('{{ active_job.container_number }}')">Accept Job</button>
+            <button class="btn btn-reject" onclick="openRejectModal('{{ active_job.container_number }}')">Reject Job</button>
+        </div>
 
         {% elif not active_job.port_slot_number %}
 
@@ -212,7 +231,47 @@
 
 
 
+<div id="reject-modal" class="modal-overlay" onclick="if(event.target===this)closeRejectModal()">
+    <div class="modal-card">
+        <h3>Reject Job</h3>
+        <p class="meta">A reason is required so dispatch can re-allocate this container.</p>
+        <textarea id="reject-reason" placeholder="e.g. Vehicle breakdown, shift ending, unsafe route…" maxlength="500"></textarea>
+        <div class="btn-row" style="margin-top:14px;">
+            <button class="btn btn-reject" onclick="closeRejectModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitReject()">Submit Rejection</button>
+        </div>
+    </div>
+</div>
+
 <script>
+let rejectContainer = null;
+
+function openRejectModal(cNum) {
+    rejectContainer = cNum;
+    document.getElementById('reject-reason').value = '';
+    document.getElementById('reject-modal').classList.add('open');
+}
+
+function closeRejectModal() {
+    rejectContainer = null;
+    document.getElementById('reject-modal').classList.remove('open');
+}
+
+function submitReject() {
+    const reason = document.getElementById('reject-reason').value.trim();
+    if (reason.length < 5) {
+        alert('Please enter a reason (at least 5 characters).');
+        return;
+    }
+    fetch('/api/driver/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ container_number: rejectContainer, reason })
+    }).then(r => r.json()).then(data => {
+        if (data.status === 'success') location.reload();
+        else alert(data.message || 'Rejection failed');
+    });
+}
 
 function acceptJob(cNum) {
 

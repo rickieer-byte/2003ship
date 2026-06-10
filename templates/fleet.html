@@ -187,7 +187,7 @@
 
     <div class="card">
         <h3>Driver Work Schedules</h3>
-        <p class="hint">Set shift hours per day. Drivers outside their scheduled hours won't be offered for standard dispatch — use emergency hire from the operations hub instead.</p>
+        <p class="hint">Set 12-hour shift blocks per day (e.g. 06:00–18:00 day shift, 18:00–06:00 night shift). Only on-shift drivers are offered for standard dispatch — use emergency hire when everyone is off shift.</p>
         <div class="schedule-grid">
             {% for d in drivers %}
             {% set days = schedule_map.get(d.driver_id, {}) %}
@@ -199,8 +199,8 @@
                     <div class="day-row">
                         <label>{{ day_labels[day] }}</label>
                         <input type="checkbox" name="day_{{ day }}_enabled" {% if entry %}checked{% endif %}>
-                        <input type="time" name="day_{{ day }}_start" value="{{ entry.shift_start if entry else '08:00' }}">
-                        <input type="time" name="day_{{ day }}_end" value="{{ entry.shift_end if entry else '17:00' }}">
+                        <input type="time" name="day_{{ day }}_start" value="{{ entry.shift_start if entry else '06:00' }}">
+                        <input type="time" name="day_{{ day }}_end" value="{{ entry.shift_end if entry else '18:00' }}">
                     </div>
                     {% endfor %}
                     <button type="submit" class="btn btn-schedule">Save Schedule</button>

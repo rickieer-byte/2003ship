@@ -28,7 +28,7 @@
         <label>Driver</label>
         <select name="driver_id" required>
             {% for d in drivers %}
-            <option value="{{ d.driver_id }}">{{ d.driver_name }} ({{ d.current_status }})</option>
+            <option value="{{ d.driver_id }}">{{ d.driver_name }}</option>
             {% endfor %}
         </select>
         <label>Last 4 digits of phone</label>

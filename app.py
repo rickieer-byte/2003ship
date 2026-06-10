@@ -10,6 +10,8 @@ from functools import wraps
 from config import Config
 from services.geo_utils import eta_minutes_from_gps, haversine_km
 from services.locations import upsert_driver_location
+from services.port_slots import EMERGENCY_CONTRACTOR_NAME
+from services.shifts import driver_is_on_shift as shift_driver_is_on_shift
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -20,7 +22,14 @@ EMERGENCY_DRIVER_FLAT_RATE = 250.00
 STORE_RENT_HOURLY_RATE = 12.00       # Port terminal storage after LFD breach
 DEMURRAGE_HOURLY_RATE = 15.00        # Carrier demurrage after post-discharge grace period
 GRACE_PERIOD_HOURS = 48              # Free time after vessel discharge before demurrage accrues
+REJECTION_COOLDOWN_HOURS = 2         # Auto-dispatch blackout after a driver declines a job
 DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+
+def is_fleet_driver(driver):
+    """Exclude the synthetic emergency-hire contractor from roster UIs."""
+    name = driver.get('driver_name') if isinstance(driver, dict) else driver
+    return name != EMERGENCY_CONTRACTOR_NAME
 
 # Map reference points exposed to the tracking UI
 MAP_PORT = {'lat': 1.3015, 'lng': 103.6340, 'label': 'Tuas Port Terminal'}
@@ -52,19 +61,7 @@ def _as_time(value):
     return value
 
 def driver_is_on_shift(driver_id, cursor, as_of=None):
-    """True only when the driver has a schedule row for today and current time is within it."""
-    as_of = as_of or datetime.datetime.now()
-    cursor.execute(
-        "SELECT shift_start, shift_end FROM driver_schedules WHERE driver_id = %s AND day_of_week = %s",
-        (driver_id, as_of.weekday()),
-    )
-    row = cursor.fetchone()
-    if not row:
-        return False
-    current_time = as_of.time()
-    start = _as_time(row['shift_start'])
-    end = _as_time(row['shift_end'])
-    return start <= current_time < end
+    return shift_driver_is_on_shift(driver_id, cursor, as_of)
 
 def driver_has_active_allocation(driver_id, cursor):
     cursor.execute("""
@@ -74,10 +71,27 @@ def driver_has_active_allocation(driver_id, cursor):
     """, (driver_id,))
     return cursor.fetchone() is not None
 
+def driver_in_rejection_cooldown(driver_id, cursor, as_of=None):
+    """Drivers who rejected a job within the cooldown window are skipped for auto-dispatch."""
+    as_of = as_of or datetime.datetime.now()
+    cursor.execute(
+        """
+        SELECT 1 FROM job_rejections jr
+        JOIN dispatch_assignments da ON da.assignment_id = jr.assignment_id
+        WHERE da.driver_id = %s
+          AND jr.rejected_at > DATE_SUB(%s, INTERVAL %s HOUR)
+        LIMIT 1
+        """,
+        (driver_id, as_of, REJECTION_COOLDOWN_HOURS),
+    )
+    return cursor.fetchone() is not None
+
 def driver_is_dispatchable(driver_id, status_code, cursor, as_of=None):
     if status_code != 'Available':
         return False
     if driver_has_active_allocation(driver_id, cursor):
+        return False
+    if driver_in_rejection_cooldown(driver_id, cursor, as_of):
         return False
     return driver_is_on_shift(driver_id, cursor, as_of)
 
@@ -165,27 +179,22 @@ def compute_fleet_savings(cursor):
         'total_savings': round(fees_averted + emergency_savings, 2),
     }
 
-def enrich_drivers_with_schedules(drivers, schedule_map, as_of=None):
+def enrich_drivers_with_schedules(drivers, schedule_map, cursor, as_of=None):
     as_of = as_of or datetime.datetime.now()
     enriched = []
     for driver in drivers:
         d = dict(driver)
-        d['schedule_summary'] = format_schedule_summary(schedule_map, driver['driver_id'])
-        days = schedule_map.get(driver['driver_id'], {})
+        driver_id = driver['driver_id']
+        d['schedule_summary'] = format_schedule_summary(schedule_map, driver_id)
+        days = schedule_map.get(driver_id, {})
         dow = as_of.weekday()
+        d['on_shift'] = driver_is_on_shift(driver_id, cursor, as_of)
         if dow in days:
-            day = days[dow]
-            d['today_hours'] = f"{day['shift_start']} – {day['shift_end']}"
-            start = datetime.datetime.strptime(day['shift_start'], '%H:%M').time()
-            end = datetime.datetime.strptime(day['shift_end'], '%H:%M').time()
-            t = as_of.time()
-            d['on_shift'] = start <= t < end
+            d['today_hours'] = f"{days[dow]['shift_start']} – {days[dow]['shift_end']}"
         elif days:
             d['today_hours'] = "Off today"
-            d['on_shift'] = False
         else:
             d['today_hours'] = "Unscheduled"
-            d['on_shift'] = False
         enriched.append(d)
     return enriched
 
@@ -195,6 +204,8 @@ def get_fleet_status(cursor, as_of=None):
     dispatchable = off_shift_available = on_delivery = offline = 0
 
     for driver in cursor.fetchall():
+        if not is_fleet_driver(driver):
+            continue
         status = driver['status_code']
         if status == 'On Delivery' or driver_has_active_allocation(driver['driver_id'], cursor):
             on_delivery += 1
@@ -301,6 +312,51 @@ def log_event(cursor, container_number, source_api, event_type, payload):
         "INSERT INTO events (container_number, source_api, event_type, raw_payload) VALUES (%s, %s, %s, %s)",
         (container_number, source_api, event_type, json.dumps(payload)),
     )
+
+def record_dispatch_assignment(cursor, allocation_id, driver_id):
+    """Create a pending assignment row; supersede any prior pending offer on this allocation."""
+    cursor.execute(
+        """
+        UPDATE dispatch_assignments
+        SET outcome_code = 'superseded', outcome_at = NOW()
+        WHERE allocation_id = %s AND outcome_code = 'pending'
+        """,
+        (allocation_id,),
+    )
+    cursor.execute(
+        """
+        INSERT INTO dispatch_assignments (allocation_id, driver_id)
+        VALUES (%s, %s)
+        """,
+        (allocation_id, driver_id),
+    )
+    return cursor.lastrowid
+
+def find_pending_assignment(cursor, allocation_id, driver_id):
+    cursor.execute(
+        """
+        SELECT assignment_id FROM dispatch_assignments
+        WHERE allocation_id = %s AND driver_id = %s AND outcome_code = 'pending'
+        ORDER BY assigned_at DESC LIMIT 1
+        """,
+        (allocation_id, driver_id),
+    )
+    row = cursor.fetchone()
+    return row['assignment_id'] if row else None
+
+def find_accepted_assignment(cursor, allocation_id, driver_id=None):
+    query = """
+        SELECT assignment_id FROM dispatch_assignments
+        WHERE allocation_id = %s AND outcome_code = 'accepted'
+    """
+    params = [allocation_id]
+    if driver_id is not None:
+        query += " AND driver_id = %s"
+        params.append(driver_id)
+    query += " ORDER BY outcome_at DESC LIMIT 1"
+    cursor.execute(query, tuple(params))
+    row = cursor.fetchone()
+    return row['assignment_id'] if row else None
 
 def fetch_inbound_vessels(cursor):
     cursor.execute("""
@@ -604,7 +660,14 @@ def allocate_truck():
             VALUES (%s, %s, 95, 'Dispatched', NULL)
             ON DUPLICATE KEY UPDATE driver_id = %s, dispatch_status_code = 'Dispatched', accepted_at = NULL
         """, (container_num, driver_id, driver_id))
-        
+        cursor.execute(
+            "SELECT allocation_id FROM truck_allocations WHERE container_number = %s",
+            (container_num,),
+        )
+        allocation = cursor.fetchone()
+        if allocation:
+            record_dispatch_assignment(cursor, allocation['allocation_id'], driver_id)
+
         log_event(cursor, container_num, 'DISPATCH_ENGINE', 'DISPATCH_ASSIGNED', {
             'driver_id': driver_id, 'driver_name': driver_name, 'urgency_score': 95,
         })
@@ -677,15 +740,43 @@ def expunge_container():
             (container_num,),
         )
         allocation = cursor.fetchone()
-        if allocation and allocation['driver_id']:
-            cursor.execute("UPDATE drivers SET status_code = 'Available' WHERE driver_id = %s", (allocation['driver_id'],))
+        assignment_id = None
+        driver_id = allocation['driver_id'] if allocation else None
+        if driver_id:
+            cursor.execute("UPDATE drivers SET status_code = 'Available' WHERE driver_id = %s", (driver_id,))
         if allocation:
+            assignment_id = find_accepted_assignment(
+                cursor, allocation['allocation_id'], driver_id,
+            )
+            if assignment_id:
+                cursor.execute(
+                    """
+                    INSERT INTO delivery_completions
+                        (assignment_id, pod_note, pod_signature, confirmed_by_user_id)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        assignment_id,
+                        pod_note,
+                        pod_signature[:500] if pod_signature else '',
+                        g.current_user_id,
+                    ),
+                )
+                cursor.execute(
+                    """
+                    UPDATE dispatch_assignments
+                    SET outcome_code = 'completed', outcome_at = NOW()
+                    WHERE assignment_id = %s
+                    """,
+                    (assignment_id,),
+                )
             from services.port_slots import release_slots_for_allocation
             release_slots_for_allocation(cursor, allocation['allocation_id'])
         log_event(cursor, container_num, 'POD_SYSTEM', 'DELIVERY_COMPLETED', {
             'pod_note': pod_note,
             'pod_signature': pod_signature[:500] if pod_signature else '',
             'completed_by': g.current_user_username,
+            'assignment_id': assignment_id if allocation else None,
         })
         cursor.execute("DELETE FROM truck_allocations WHERE container_number = %s", (container_num,))
         cursor.execute("DELETE FROM containers WHERE container_number = %s", (container_num,))
@@ -705,11 +796,14 @@ def expunge_container():
 @requires_authenticated_session()
 def drivers_dashboard():
     cursor = mysql.connection.cursor()
-    cursor.execute("SELECT * FROM v_drivers_live ORDER BY current_status, driver_name")
+    cursor.execute(
+        "SELECT * FROM v_drivers_live WHERE driver_name != %s ORDER BY current_status, driver_name",
+        (EMERGENCY_CONTRACTOR_NAME,),
+    )
     drivers = cursor.fetchall()
     schedule_map = fetch_driver_schedules(cursor)
+    drivers = enrich_drivers_with_schedules(drivers, schedule_map, cursor)
     cursor.close()
-    drivers = enrich_drivers_with_schedules(drivers, schedule_map)
     return render_template('drivers.html', drivers=drivers, username=g.current_user_username, role=g.current_user_role)
 
 @app.route('/fleet', methods=['GET'])
@@ -719,8 +813,8 @@ def fleet_dashboard():
     cursor.execute("SELECT * FROM v_drivers_live ORDER BY driver_name")
     drivers = cursor.fetchall()
     schedule_map = fetch_driver_schedules(cursor)
+    drivers = enrich_drivers_with_schedules(drivers, schedule_map, cursor)
     cursor.close()
-    drivers = enrich_drivers_with_schedules(drivers, schedule_map)
     return render_template('fleet.html', drivers=drivers, schedule_map=schedule_map,
                            day_labels=DAY_LABELS, username=g.current_user_username, role=g.current_user_role)
 
@@ -734,6 +828,11 @@ def add_driver():
         cursor.execute("INSERT INTO drivers (driver_name, phone_number, status_code) VALUES (%s, %s, 'Available')", (name, phone))
         driver_id = cursor.lastrowid
         upsert_driver_location(cursor, driver_id, MAP_DEPOT['lat'], MAP_DEPOT['lng'])
+        for day in range(7):
+            cursor.execute(
+                "INSERT INTO driver_schedules (driver_id, day_of_week, shift_start, shift_end) VALUES (%s, %s, %s, %s)",
+                (driver_id, day, '06:00:00', '18:00:00'),
+            )
         mysql.connection.commit()
         flash(f"Driver {name} integrated successfully into asset hub database.", "success")
     except Exception:
@@ -836,7 +935,8 @@ def telemetry_live():
                heading, speed_kph, DATE_FORMAT(last_gps_update, '%Y-%m-%dT%H:%i:%s') AS last_gps_update
         FROM v_drivers_live
         WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-    """)
+          AND driver_name != %s
+    """, (EMERGENCY_CONTRACTOR_NAME,))
     drivers = cursor.fetchall()
     cursor.execute("""
         SELECT voyage_id AS vessel_id, vessel_name, voyage_number, latitude, longitude, heading,
@@ -906,7 +1006,11 @@ def replay_events_api():
 @app.route('/driver')
 def driver_login_page():
     cursor = mysql.connection.cursor()
-    cursor.execute("SELECT driver_id, driver_name, phone_number, current_status FROM v_drivers_live ORDER BY driver_name")
+    cursor.execute(
+        "SELECT driver_id, driver_name, phone_number, current_status FROM v_drivers_live "
+        "WHERE driver_name != %s ORDER BY driver_name",
+        (EMERGENCY_CONTRACTOR_NAME,),
+    )
     drivers = cursor.fetchall()
     cursor.close()
     return render_template('driver_login.html', drivers=drivers)
@@ -919,7 +1023,11 @@ def driver_login():
     cursor.execute("SELECT * FROM v_drivers_live WHERE driver_id = %s", (driver_id,))
     driver = cursor.fetchone()
     cursor.close()
-    if not driver or not driver['phone_number'].replace(' ', '').endswith(phone_tail):
+    if (
+        not driver
+        or not is_fleet_driver(driver)
+        or not driver['phone_number'].replace(' ', '').endswith(phone_tail)
+    ):
         flash('Invalid driver or phone verification.', 'danger')
         return redirect(url_for('driver_login_page'))
     response = make_response(redirect(url_for('driver_portal')))
@@ -960,6 +1068,68 @@ def driver_logout():
     response.delete_cookie('driver_id', path='/')
     return response
 
+@app.route('/api/driver/reject', methods=['POST'])
+def driver_reject_job():
+    driver = get_driver_from_cookie()
+    if not driver:
+        return jsonify({'status': 'error', 'message': 'Not authenticated'}), 401
+    data = request.json or {}
+    container_num = data.get('container_number')
+    reason = (data.get('reason') or '').strip()
+    if not container_num:
+        return jsonify({'status': 'error', 'message': 'Container number is required'}), 400
+    if len(reason) < 5:
+        return jsonify({'status': 'error', 'message': 'Please provide a rejection reason (at least 5 characters).'}), 400
+    cursor = mysql.connection.cursor()
+    try:
+        cursor.execute("""
+            SELECT allocation_id, driver_id, accepted_at
+            FROM truck_allocations
+            WHERE container_number = %s AND driver_id = %s AND dispatch_status_code = 'Dispatched'
+        """, (container_num, driver['driver_id']))
+        allocation = cursor.fetchone()
+        if not allocation:
+            return jsonify({'status': 'error', 'message': 'No active assignment to reject'}), 404
+        if allocation['accepted_at']:
+            return jsonify({'status': 'error', 'message': 'Cannot reject a job that has already been accepted'}), 409
+        assignment_id = find_pending_assignment(
+            cursor, allocation['allocation_id'], driver['driver_id'],
+        )
+        if not assignment_id:
+            return jsonify({'status': 'error', 'message': 'No pending assignment record found'}), 404
+        cursor.execute(
+            "INSERT INTO job_rejections (assignment_id, reason) VALUES (%s, %s)",
+            (assignment_id, reason[:500]),
+        )
+        cursor.execute(
+            """
+            UPDATE dispatch_assignments
+            SET outcome_code = 'rejected', outcome_at = NOW()
+            WHERE assignment_id = %s
+            """,
+            (assignment_id,),
+        )
+        cursor.execute("""
+            UPDATE truck_allocations
+            SET driver_id = NULL, dispatch_status_code = 'Pending', accepted_at = NULL
+            WHERE allocation_id = %s
+        """, (allocation['allocation_id'],))
+        cursor.execute(
+            "UPDATE drivers SET status_code = 'Available' WHERE driver_id = %s",
+            (driver['driver_id'],),
+        )
+        log_event(cursor, container_num, 'DRIVER_APP', 'JOB_REJECTED', {
+            'assignment_id': assignment_id,
+            'reason': reason[:500],
+        })
+        mysql.connection.commit()
+        return jsonify({'status': 'success', 'message': 'Job declined. Dispatcher will be notified to re-allocate.'})
+    except Exception as exc:
+        mysql.connection.rollback()
+        return jsonify({'status': 'error', 'message': str(exc)}), 500
+    finally:
+        cursor.close()
+
 @app.route('/api/driver/accept', methods=['POST'])
 def driver_accept_job():
     driver = get_driver_from_cookie()
@@ -970,16 +1140,34 @@ def driver_accept_job():
     cursor = mysql.connection.cursor()
     try:
         cursor.execute("""
-            UPDATE truck_allocations SET accepted_at = NOW()
+            SELECT allocation_id FROM truck_allocations
             WHERE container_number = %s AND driver_id = %s AND accepted_at IS NULL
         """, (container_num, driver['driver_id']))
-        if cursor.rowcount == 0:
+        allocation = cursor.fetchone()
+        if not allocation:
             return jsonify({'status': 'error', 'message': 'No pending job to accept'}), 404
+        assignment_id = find_pending_assignment(
+            cursor, allocation['allocation_id'], driver['driver_id'],
+        )
+        if not assignment_id:
+            return jsonify({'status': 'error', 'message': 'No pending assignment record found'}), 404
+        cursor.execute(
+            "UPDATE truck_allocations SET accepted_at = NOW() WHERE allocation_id = %s",
+            (allocation['allocation_id'],),
+        )
+        cursor.execute(
+            """
+            UPDATE dispatch_assignments
+            SET outcome_code = 'accepted', outcome_at = NOW()
+            WHERE assignment_id = %s
+            """,
+            (assignment_id,),
+        )
         cursor.execute(
             "UPDATE drivers SET status_code = 'On Delivery' WHERE driver_id = %s",
             (driver['driver_id'],),
         )
-        log_event(cursor, container_num, 'DRIVER_APP', 'JOB_ACCEPTED', {'driver_id': driver['driver_id']})
+        log_event(cursor, container_num, 'DRIVER_APP', 'JOB_ACCEPTED', {'assignment_id': assignment_id})
         mysql.connection.commit()
         return jsonify({'status': 'success'})
     finally:
@@ -1100,25 +1288,52 @@ def driver_update_location():
     finally:
         cursor.close()
 
+def lfd_traffic_light(lfd_datetime, as_of=None):
+    as_of = as_of or datetime.datetime.now()
+    hours = (lfd_datetime - as_of).total_seconds() / 3600.0
+    if hours <= 12:
+        return 'RED'
+    if hours <= 24:
+        return 'YELLOW'
+    return 'GREEN'
+
 @app.route('/api/containers/etas')
 @requires_authenticated_session()
 def container_etas_api():
     _maybe_advance_simulation()
     cursor = mysql.connection.cursor()
     cursor.execute("""
-        SELECT c.container_number, IFNULL(t.dispatch_status_code, 'Pending') AS dispatch_status,
+        SELECT c.container_number, c.lfd_datetime,
+               IFNULL(t.dispatch_status_code, 'Pending') AS dispatch_status,
                t.accepted_at, t.picked_up_at, t.driver_id,
                d.driver_name,
                dl.latitude AS driver_lat, dl.longitude AS driver_lng, dl.speed_kph,
                (t.dispatch_status_code = 'At Warehouse') AS at_warehouse,
-               psb.slot_number AS port_slot_number
+               psb.slot_number AS port_slot_number,
+               rej.driver_name AS rejected_by,
+               rej.reason AS rejection_reason
         FROM containers c
         LEFT JOIN truck_allocations t ON t.container_number = c.container_number
         LEFT JOIN drivers d ON t.driver_id = d.driver_id
         LEFT JOIN driver_locations dl ON dl.driver_id = d.driver_id
         LEFT JOIN port_slot_bookings psb ON psb.allocation_id = t.allocation_id AND psb.released_at IS NULL
+        LEFT JOIN (
+            SELECT t2.container_number, d2.driver_name, jr.reason
+            FROM job_rejections jr
+            JOIN dispatch_assignments da ON da.assignment_id = jr.assignment_id
+            JOIN drivers d2 ON d2.driver_id = da.driver_id
+            JOIN truck_allocations t2 ON t2.allocation_id = da.allocation_id
+            JOIN (
+                SELECT da3.allocation_id, MAX(jr3.rejected_at) AS latest_rejected_at
+                FROM job_rejections jr3
+                JOIN dispatch_assignments da3 ON da3.assignment_id = jr3.assignment_id
+                GROUP BY da3.allocation_id
+            ) latest ON latest.allocation_id = da.allocation_id AND latest.latest_rejected_at = jr.rejected_at
+        ) rej ON rej.container_number = c.container_number
+            AND IFNULL(t.dispatch_status_code, 'Pending') = 'Pending'
     """)
     rows = cursor.fetchall()
+    fleet = get_fleet_status(cursor)
     cursor.close()
     result = {}
     for row in rows:
@@ -1152,9 +1367,16 @@ def container_etas_api():
             alert_status = 'TO WAREHOUSE'
         elif dispatch_status == 'Dispatched' and not row['driver_id']:
             alert_status = 'EMERGENCY'
+        elif dispatch_status == 'Pending':
+            alert_status = lfd_traffic_light(row['lfd_datetime'])
         else:
             alert_status = None
         emergency_hire = dispatch_status == 'Dispatched' and not row['driver_id']
+        rejection_hint = None
+        if dispatch_status == 'Pending' and row['rejected_by']:
+            rejection_hint = f"{row['rejected_by']} declined"
+            if row['rejection_reason']:
+                rejection_hint += f" ({row['rejection_reason']})"
         result[row['container_number']] = {
             'eta_minutes': eta,
             'at_warehouse': at_warehouse,
@@ -1166,12 +1388,31 @@ def container_etas_api():
             'driver_name': row['driver_name'],
             'alert_status': alert_status,
             'can_expunge': at_warehouse or emergency_hire,
+            'rejection_hint': rejection_hint,
         }
+    result['_fleet'] = fleet
+    result['_refreshed_at'] = datetime.datetime.now().isoformat()
     return jsonify(result)
 
 # -------------------------------------------------------------
 # STRATEGIC EXECUTION LAYER OPERATIONS
 # -------------------------------------------------------------
+@app.route('/analytics/export')
+@requires_role('Fleet Manager')
+def analytics_export():
+    from services.report_export import build_analytics_csv_zip
+    cursor = mysql.connection.cursor()
+    try:
+        buffer = build_analytics_csv_zip(cursor)
+    finally:
+        cursor.close()
+    stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M')
+    filename = f'fleet_analytics_{stamp}.zip'
+    response = make_response(buffer.getvalue())
+    response.headers['Content-Type'] = 'application/zip'
+    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
+    return response
+
 @app.route('/analytics')
 @requires_role('Fleet Manager')
 def contract_negotiation_insights():

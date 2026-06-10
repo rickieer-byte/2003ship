@@ -91,7 +91,6 @@
             font-size: 11px;
             display: inline-block;
         }
-        .status-Available { background: #dcfce7; color: #166534; }
         .status-On-Delivery { background: #dbeafe; color: #1e40af; }
         .status-Offline { background: #fee2e2; color: #991b1b; }
         .shift-yes { background: #dcfce7; color: #166534; }
@@ -129,22 +128,22 @@
         Use <strong>Instant Allocate → Authorize Emergency Hire</strong> on the operations hub when no on-shift drivers are available.
     </div>
 
-    {% set available = drivers | selectattr('current_status', 'equalto', 'Available') | selectattr('on_shift', 'equalto', true) | list | length %}
+    {% set on_shift_ready = drivers | selectattr('on_shift', 'equalto', true) | rejectattr('current_status', 'equalto', 'On Delivery') | rejectattr('current_status', 'equalto', 'Offline') | list | length %}
     {% set on_delivery = drivers | selectattr('current_status', 'equalto', 'On Delivery') | list | length %}
-    {% set offline = drivers | rejectattr('on_shift', 'equalto', true) | rejectattr('current_status', 'equalto', 'On Delivery') | list | length %}
+    {% set off_shift = drivers | rejectattr('on_shift', 'equalto', true) | rejectattr('current_status', 'equalto', 'On Delivery') | list | length %}
 
     <div class="summary-row">
         <div class="summary-card available">
-            <h3>Available (On Shift)</h3>
-            <div class="value">{{ available }}</div>
+            <h3>On Shift</h3>
+            <div class="value">{{ on_shift_ready }}</div>
         </div>
         <div class="summary-card busy">
             <h3>On Delivery</h3>
             <div class="value">{{ on_delivery }}</div>
         </div>
         <div class="summary-card offline">
-            <h3>Off Shift / Offline</h3>
-            <div class="value">{{ offline }}</div>
+            <h3>Off Shift</h3>
+            <div class="value">{{ off_shift }}</div>
         </div>
     </div>
 
@@ -175,7 +174,13 @@
                         {% endif %}
                     </td>
                     <td>
-                        <span class="badge status-{{ d.current_status | replace(' ', '-') }}">{{ d.current_status }}</span>
+                        {% if d.current_status == 'On Delivery' %}
+                            <span class="badge status-On-Delivery">On Delivery</span>
+                        {% elif d.current_status == 'Offline' %}
+                            <span class="badge status-Offline">Offline</span>
+                        {% else %}
+                            <span class="hours-text">—</span>
+                        {% endif %}
                     </td>
                 </tr>
                 {% else %}

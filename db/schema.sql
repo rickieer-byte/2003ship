@@ -5,6 +5,9 @@
 --   • Lookup tables: roles, driver_statuses, dispatch_statuses, tracking_statuses
 --   • Telemetry isolated: driver_locations, vessel_tracking (time-varying facts)
 --   • Dispatch lifecycle on truck_allocations only (no duplicate at_port on containers)
+--   • Driver assignment history in dispatch_assignments (outcome via assignment_outcomes FK)
+--   • job_rejections references assignment_id only (no redundant container/driver columns)
+--   • delivery_completions holds POD facts; driver/container derived via assignment joins
 --   • Referential integrity via FK constraints throughout
 --
 -- Run once: python db/setup.py   OR   mysql -u USER -p < db/schema.sql
@@ -19,6 +22,10 @@ USE escalation_db;
 SET FOREIGN_KEY_CHECKS = 0;
 DROP TABLE IF EXISTS alerts_log;
 DROP TABLE IF EXISTS port_slot_bookings;
+DROP TABLE IF EXISTS delivery_completions;
+DROP TABLE IF EXISTS job_rejections;
+DROP TABLE IF EXISTS dispatch_assignments;
+DROP TABLE IF EXISTS assignment_outcomes;
 DROP TABLE IF EXISTS truck_allocations;
 DROP TABLE IF EXISTS driver_schedules;
 DROP TABLE IF EXISTS events;
@@ -85,6 +92,18 @@ INSERT INTO dispatch_statuses (status_code, description) VALUES
     ('Dispatched', 'Driver en route — port pickup then warehouse delivery'),
     ('At Port', 'Driver within port geofence (legacy)'),
     ('At Warehouse', 'Container delivered to de-stuff yard');
+
+CREATE TABLE assignment_outcomes (
+    outcome_code VARCHAR(20) PRIMARY KEY,
+    description VARCHAR(100) NOT NULL
+);
+
+INSERT INTO assignment_outcomes (outcome_code, description) VALUES
+    ('pending', 'Awaiting driver accept or reject'),
+    ('accepted', 'Driver accepted the assignment'),
+    ('rejected', 'Driver declined the assignment'),
+    ('superseded', 'Replaced by a new driver assignment'),
+    ('completed', 'Delivery confirmed via POD');
 
 INSERT INTO tracking_statuses (status_code, description) VALUES
     ('At Sea', 'Vessel underway to port'),
@@ -217,6 +236,50 @@ CREATE TABLE truck_allocations (
     FOREIGN KEY (dispatch_status_code) REFERENCES dispatch_statuses(status_code),
     FOREIGN KEY (warehouse_id) REFERENCES warehouses(warehouse_id),
     INDEX idx_allocations_status (dispatch_status_code)
+);
+
+-- ---------------------------------------------------------------------------
+-- Dispatch assignment history (one row per driver-offer; 3NF outcome lookup)
+-- ---------------------------------------------------------------------------
+CREATE TABLE dispatch_assignments (
+    assignment_id INT AUTO_INCREMENT PRIMARY KEY,
+    allocation_id INT NULL,
+    driver_id INT NOT NULL,
+    assigned_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    outcome_code VARCHAR(20) NOT NULL DEFAULT 'pending',
+    outcome_at DATETIME NULL,
+    FOREIGN KEY (allocation_id) REFERENCES truck_allocations(allocation_id) ON DELETE SET NULL,
+    FOREIGN KEY (driver_id) REFERENCES drivers(driver_id),
+    FOREIGN KEY (outcome_code) REFERENCES assignment_outcomes(outcome_code),
+    INDEX idx_assignments_allocation (allocation_id, assigned_at),
+    INDEX idx_assignments_driver_outcome (driver_id, outcome_code)
+);
+
+-- ---------------------------------------------------------------------------
+-- Driver job rejections (reason only; driver/container via assignment_id)
+-- ---------------------------------------------------------------------------
+CREATE TABLE job_rejections (
+    rejection_id INT AUTO_INCREMENT PRIMARY KEY,
+    assignment_id INT NOT NULL,
+    reason VARCHAR(500) NOT NULL,
+    rejected_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_assignment_rejection (assignment_id),
+    FOREIGN KEY (assignment_id) REFERENCES dispatch_assignments(assignment_id) ON DELETE CASCADE
+);
+
+-- ---------------------------------------------------------------------------
+-- POD delivery completions (linked to accepted assignment; survives expunge)
+-- ---------------------------------------------------------------------------
+CREATE TABLE delivery_completions (
+    completion_id INT AUTO_INCREMENT PRIMARY KEY,
+    assignment_id INT NOT NULL,
+    completed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    pod_note TEXT,
+    pod_signature VARCHAR(500),
+    confirmed_by_user_id INT NULL,
+    UNIQUE KEY unique_assignment_completion (assignment_id),
+    FOREIGN KEY (assignment_id) REFERENCES dispatch_assignments(assignment_id),
+    FOREIGN KEY (confirmed_by_user_id) REFERENCES users(user_id) ON DELETE SET NULL
 );
 
 -- ---------------------------------------------------------------------------

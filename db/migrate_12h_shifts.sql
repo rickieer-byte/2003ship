@@ -1,0 +1,13 @@
+-- Apply staggered 12-hour driver schedules (existing databases only)
+-- Run: mysql -u root -p escalation_db < db/migrate_12h_shifts.sql
+
+USE escalation_db;
+
+DELETE FROM driver_schedules
+WHERE driver_id IN (SELECT driver_id FROM drivers WHERE driver_name != 'Emergency Contractor');
+
+INSERT INTO driver_schedules (driver_id, day_of_week, shift_start, shift_end) VALUES
+(1, 0, '06:00:00', '18:00:00'), (1, 2, '06:00:00', '18:00:00'), (1, 4, '06:00:00', '18:00:00'), (1, 6, '06:00:00', '18:00:00'),
+(2, 0, '18:00:00', '06:00:00'), (2, 2, '18:00:00', '06:00:00'), (2, 4, '18:00:00', '06:00:00'), (2, 6, '18:00:00', '06:00:00'),
+(3, 1, '06:00:00', '18:00:00'), (3, 3, '06:00:00', '18:00:00'), (3, 5, '06:00:00', '18:00:00'),
+(4, 1, '18:00:00', '06:00:00'), (4, 3, '18:00:00', '06:00:00'), (4, 5, '18:00:00', '06:00:00');

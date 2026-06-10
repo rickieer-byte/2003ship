@@ -702,9 +702,44 @@ function refreshPortSlots() {
     fetch('/api/port/slots').then(r => r.json()).then(applyPortSlots);
 }
 
+function applyFleetBar(fleet) {
+    if (!fleet) return;
+    const stats = document.querySelector('.fleet-stats');
+    if (stats) {
+        stats.innerHTML = `
+            <span><strong>${fleet.dispatchable}</strong> on shift &amp; ready</span>
+            <span><strong>${fleet.off_shift_available}</strong> off shift</span>
+            <span><strong>${fleet.on_delivery}</strong> on delivery</span>
+            ${fleet.offline ? `<span><strong>${fleet.offline}</strong> offline</span>` : ''}`;
+    }
+    const hint = document.querySelector('.fleet-hint');
+    if (hint) {
+        hint.innerHTML = fleet.dispatchable === 0
+            ? 'No drivers dispatchable right now — <strong>Instant Allocate</strong> will offer emergency hire.'
+            : 'Internal fleet available for standard dispatch.';
+    }
+}
+
 function updateActionCell(cNum, info) {
     const cell = document.getElementById(`action-${cNum}`);
     if (!cell) return;
+    if (info.dispatch_status === 'Pending') {
+        cell.textContent = '';
+        if (info.rejection_hint) {
+            const note = document.createElement('span');
+            note.className = 'action-hint';
+            note.style.cssText = 'display:block;margin-bottom:6px;color:#b45309;';
+            note.textContent = info.rejection_hint;
+            cell.appendChild(note);
+        }
+        const btn = document.createElement('button');
+        btn.className = 'btn';
+        btn.id = `btn-${cNum}`;
+        btn.textContent = 'Instant Allocate';
+        btn.onclick = () => simulateDispatch(cNum);
+        cell.appendChild(btn);
+        return;
+    }
     if (info.can_expunge) {
         const isEmergency = !info.driver_name && info.dispatch_status === 'Dispatched';
         const label = isEmergency ? 'Confirm Emergency Delivery' : 'Complete POD';
@@ -744,14 +779,16 @@ function applyDispatchInfo(cNum, info) {
         }
         else if (info.dispatch_status === 'Pending') el.innerText = '—';
     }
-    if (info.dispatch_status === 'Dispatched' || info.at_warehouse || info.can_expunge) {
-        updateActionCell(cNum, info);
-    }
+    updateActionCell(cNum, info);
 }
 
 function refreshDispatchState() {
     fetch('/api/containers/etas').then(r => r.json()).then(data => {
-        Object.entries(data).forEach(([cNum, info]) => applyDispatchInfo(cNum, info));
+        applyFleetBar(data._fleet);
+        Object.entries(data).forEach(([cNum, info]) => {
+            if (cNum.startsWith('_') || !info || typeof info !== 'object') return;
+            applyDispatchInfo(cNum, info);
+        });
     });
 }
 
@@ -822,7 +859,7 @@ function refreshEtas() {
 }
 
 window.addEventListener('load', () => { initPodCanvas(); refreshDispatchState(); });
-setInterval(refreshDispatchState, 5000);
+setInterval(refreshDispatchState, 2000);
 </script>
 </body>
 </html>

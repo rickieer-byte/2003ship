@@ -19,18 +19,8 @@ def _as_time(value):
 
 
 def driver_is_on_shift(cursor, driver_id, as_of=None):
-    as_of = as_of or datetime.datetime.now()
-    cursor.execute(
-        "SELECT shift_start, shift_end FROM driver_schedules WHERE driver_id = %s AND day_of_week = %s",
-        (driver_id, as_of.weekday()),
-    )
-    row = cursor.fetchone()
-    if not row:
-        return False
-    current_time = as_of.time()
-    start = _as_time(row['shift_start'])
-    end = _as_time(row['shift_end'])
-    return start <= current_time < end
+    from services.shifts import driver_is_on_shift as check_shift
+    return check_shift(driver_id, cursor, as_of)
 
 
 def _fetch_warehouse(cursor, warehouse_id):

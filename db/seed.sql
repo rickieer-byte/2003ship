@@ -8,8 +8,9 @@
 --   manager_user    → Fleet Manager
 --
 -- Driver app: last 4 digits of phone (Mubarak Ali → 4567)
--- Mubarak & Siti: Mon–Fri only (off shift on weekends — use emergency dispatch to demo)
--- Marcus & Rohan: include Sat/Sun for weekend demos
+-- Staggered 12-hour shifts (24/7 coverage, two workers per calendar day):
+--   Mubarak & Siti — Mon/Wed/Fri/Sun (06:00–18:00 then 18:00–06:00)
+--   Marcus & Rohan — Tue/Thu/Sat
 -- =============================================================================
 
 USE escalation_db;
@@ -17,6 +18,9 @@ USE escalation_db;
 SET FOREIGN_KEY_CHECKS = 0;
 TRUNCATE TABLE alerts_log;
 TRUNCATE TABLE port_slot_bookings;
+TRUNCATE TABLE delivery_completions;
+TRUNCATE TABLE job_rejections;
+TRUNCATE TABLE dispatch_assignments;
 TRUNCATE TABLE truck_allocations;
 TRUNCATE TABLE driver_schedules;
 TRUNCATE TABLE events;
@@ -49,14 +53,10 @@ INSERT INTO driver_locations (driver_id, latitude, longitude, heading, speed_kph
 (4, 1.3338, 103.7075, 310.0, 0.0, NOW());
 
 INSERT INTO driver_schedules (driver_id, day_of_week, shift_start, shift_end) VALUES
-(1, 0, '08:00:00', '17:00:00'), (1, 1, '08:00:00', '17:00:00'), (1, 2, '08:00:00', '17:00:00'),
-(1, 3, '08:00:00', '17:00:00'), (1, 4, '08:00:00', '17:00:00'),
-(2, 0, '08:00:00', '17:00:00'), (2, 1, '08:00:00', '17:00:00'), (2, 2, '08:00:00', '17:00:00'),
-(2, 3, '08:00:00', '17:00:00'), (2, 4, '08:00:00', '17:00:00'),
-(3, 0, '06:00:00', '14:00:00'), (3, 1, '06:00:00', '14:00:00'), (3, 2, '06:00:00', '14:00:00'),
-(3, 3, '06:00:00', '14:00:00'), (3, 4, '06:00:00', '14:00:00'), (3, 5, '06:00:00', '23:00:00'), (3, 6, '06:00:00', '23:00:00'),
-(4, 0, '09:00:00', '22:00:00'), (4, 1, '09:00:00', '22:00:00'), (4, 2, '09:00:00', '22:00:00'),
-(4, 3, '09:00:00', '22:00:00'), (4, 4, '09:00:00', '22:00:00'), (4, 5, '08:00:00', '23:00:00'), (4, 6, '09:00:00', '23:00:00');
+(1, 0, '06:00:00', '18:00:00'), (1, 2, '06:00:00', '18:00:00'), (1, 4, '06:00:00', '18:00:00'), (1, 6, '06:00:00', '18:00:00'),
+(2, 0, '18:00:00', '06:00:00'), (2, 2, '18:00:00', '06:00:00'), (2, 4, '18:00:00', '06:00:00'), (2, 6, '18:00:00', '06:00:00'),
+(3, 1, '06:00:00', '18:00:00'), (3, 3, '06:00:00', '18:00:00'), (3, 5, '06:00:00', '18:00:00'),
+(4, 1, '18:00:00', '06:00:00'), (4, 3, '18:00:00', '06:00:00'), (4, 5, '18:00:00', '06:00:00');
 
 INSERT INTO vessels (vessel_id, vessel_name) VALUES
 ('VES-COSCO-88', 'Cosco Shipping Alps'),
