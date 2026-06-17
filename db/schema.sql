@@ -20,6 +20,7 @@ CREATE DATABASE IF NOT EXISTS escalation_db
 USE escalation_db;
 
 SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS leave_requests;
 DROP TABLE IF EXISTS alerts_log;
 DROP TABLE IF EXISTS port_slot_bookings;
 DROP TABLE IF EXISTS delivery_completions;
@@ -42,7 +43,8 @@ DROP TABLE IF EXISTS dispatch_statuses;
 DROP TABLE IF EXISTS tracking_statuses;
 DROP TABLE IF EXISTS ports;
 DROP TABLE IF EXISTS warehouses;
-SET FOREIGN_KEY_CHECKS = 1;
+-- SET FOREIGN_KEY_CHECKS = 1;
+
 
 -- ---------------------------------------------------------------------------
 -- Reference / lookup entities (eliminate repeating domain values)
@@ -179,7 +181,6 @@ CREATE TABLE events (
     event_type VARCHAR(50) NOT NULL,
     event_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     raw_payload JSON,
-    FOREIGN KEY (container_number) REFERENCES containers(container_number) ON DELETE SET NULL,
     INDEX idx_events_container (container_number, event_timestamp),
     INDEX idx_events_type (event_type, event_timestamp)
 );
@@ -327,6 +328,58 @@ CREATE TABLE users (
 );
 
 -- ---------------------------------------------------------------------------
+-- Staff leave requests and SQL validation triggers (Max 2 per type per day)
+-- ---------------------------------------------------------------------------
+CREATE TABLE leave_requests (
+    leave_id INT AUTO_INCREMENT PRIMARY KEY,
+    employee_type VARCHAR(20) NOT NULL COMMENT 'Planner, Dispatcher, Driver',
+    user_id INT NULL COMMENT 'References users.user_id if Planner or Dispatcher',
+    driver_id INT NULL COMMENT 'References drivers.driver_id if Driver',
+    leave_date DATE NOT NULL,
+    reason VARCHAR(255) NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+    FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
+    UNIQUE KEY unique_employee_leave (employee_type, user_id, driver_id, leave_date)
+);
+
+DELIMITER //
+CREATE TRIGGER before_leave_request_insert
+BEFORE INSERT ON leave_requests
+FOR EACH ROW
+BEGIN
+    DECLARE leave_count INT;
+    SELECT COUNT(*) INTO leave_count
+    FROM leave_requests
+    WHERE employee_type = NEW.employee_type
+      AND leave_date = NEW.leave_date;
+    IF leave_count >= 2 THEN
+        SIGNAL SQLSTATE '45000'
+        SET MESSAGE_TEXT = 'Leave limit reached: A maximum of 2 employees of this type can be on leave on any given day.';
+    END IF;
+END //
+DELIMITER ;
+
+DELIMITER //
+CREATE TRIGGER before_leave_request_update
+BEFORE UPDATE ON leave_requests
+FOR EACH ROW
+BEGIN
+    DECLARE leave_count INT;
+    IF (NEW.leave_date != OLD.leave_date OR NEW.employee_type != OLD.employee_type) THEN
+        SELECT COUNT(*) INTO leave_count
+        FROM leave_requests
+        WHERE employee_type = NEW.employee_type
+          AND leave_date = NEW.leave_date;
+        IF leave_count >= 2 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Leave limit reached: A maximum of 2 employees of this type can be on leave on any given day.';
+        END IF;
+    END IF;
+END //
+DELIMITER ;
+
+-- ---------------------------------------------------------------------------
 -- Convenience views (read-only; optional for reporting tools)
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE VIEW v_drivers_live AS
@@ -384,3 +437,5 @@ JOIN vessels v ON v.vessel_id = vy.vessel_id
 LEFT JOIN truck_allocations t ON t.container_number = c.container_number
 LEFT JOIN drivers d ON d.driver_id = t.driver_id
 LEFT JOIN driver_locations dl ON dl.driver_id = d.driver_id;
+
+SET FOREIGN_KEY_CHECKS = 1;

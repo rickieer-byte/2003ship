@@ -4,84 +4,155 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sign In - Digital Process Architecture</title>
+    <!-- Modern Typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            --primary: #1e3a8a;
-            --primary-dark: #0f172a;
-            --bg-main: #f4f6f9;
-            --surface: #ffffff;
-            --text-dark: #334155;
-            --border: #d1d5db;
-            --color-error: #ef4444;
+            --primary: #3b82f6;
+            --primary-glow: rgba(59, 130, 246, 0.35);
+            --bg-gradient: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+            --surface-glass: rgba(30, 41, 59, 0.65);
+            --border-glass: rgba(255, 255, 255, 0.1);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --color-error: #f87171;
+            --color-error-bg: rgba(239, 68, 68, 0.15);
+            --color-error-border: rgba(239, 68, 68, 0.4);
         }
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg-main);
-            color: var(--text-dark);
+            font-family: 'Outfit', 'Segoe UI', sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-main);
             display: flex;
             justify-content: center;
             align-items: center;
             height: 100vh;
             margin: 0;
+            overflow: hidden;
+            position: relative;
         }
+        
+        /* Interactive Glowing Background Blobs */
+        .glow-circle {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(80px);
+            z-index: 0;
+            opacity: 0.25;
+        }
+        .glow-blue {
+            width: 300px;
+            height: 300px;
+            background: #2563eb;
+            top: 15%;
+            left: 20%;
+            animation: floatSlow 8s infinite alternate;
+        }
+        .glow-indigo {
+            width: 400px;
+            height: 400px;
+            background: #4f46e5;
+            bottom: 15%;
+            right: 20%;
+            animation: floatSlow 12s infinite alternate-reverse;
+        }
+        @keyframes floatSlow {
+            0% { transform: translateY(0) scale(1); }
+            100% { transform: translateY(-30px) scale(1.1); }
+        }
+
         .card {
-            background: var(--surface);
+            background: var(--surface-glass);
+            backdrop-filter: blur(20px) saturate(180%);
+            -webkit-backdrop-filter: blur(20px) saturate(180%);
+            border: 1px solid var(--border-glass);
             padding: 40px;
-            border-radius: 8px;
-            box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1);
+            border-radius: 16px;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.3);
             width: 100%;
-            max-width: 380px;
+            max-width: 400px;
+            z-index: 1;
+            box-sizing: border-box;
+            animation: fadeIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
         }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
         h2 {
-            color: var(--primary);
+            color: #ffffff;
             margin: 0 0 25px 0;
-            font-size: 22px;
+            font-size: 26px;
             text-align: center;
-            font-weight: 600;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            background: linear-gradient(to right, #3b82f6, #60a5fa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
         .form-group {
             margin-bottom: 20px;
         }
         label {
             display: block;
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             font-size: 13px;
             font-weight: 600;
+            color: var(--text-muted);
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
         }
-        input {
+        input, select {
             width: 100%;
-            padding: 10px 14px;
-            border: 1px solid var(--border);
-            border-radius: 4px;
+            padding: 12px 16px;
+            border: 1px solid var(--border-glass);
+            border-radius: 8px;
             box-sizing: border-box;
             font-size: 14px;
-            transition: border-color 0.2s;
+            background: rgba(15, 23, 42, 0.4);
+            color: var(--text-main);
+            font-family: inherit;
+            transition: all 0.3s ease;
         }
-        input:focus {
+        input:focus, select:focus {
             outline: none;
             border-color: var(--primary);
+            box-shadow: 0 0 0 4px var(--primary-glow);
+            background: rgba(15, 23, 42, 0.6);
+        }
+        select option {
+            background: #1e293b;
+            color: var(--text-main);
         }
         button {
             width: 100%;
-            padding: 12px;
-            background: var(--primary);
-            color: white;
+            padding: 14px;
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            color: #ffffff;
             border: none;
-            border-radius: 4px;
+            border-radius: 8px;
             font-size: 15px;
-            font-weight: bold;
+            font-weight: 700;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.3);
             margin-top: 10px;
         }
         button:hover {
-            background: #1d4ed8;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(37, 99, 235, 0.4);
+            background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+        }
+        button:active {
+            transform: translateY(0);
         }
         .flash {
-            background-color: #fee2e2;
+            background-color: var(--color-error-bg);
             color: var(--color-error);
-            padding: 10px 14px;
-            border-radius: 4px;
+            border: 1px solid var(--color-error-border);
+            padding: 12px 16px;
+            border-radius: 8px;
             font-size: 13px;
             margin-bottom: 20px;
             font-weight: 500;
@@ -91,39 +162,132 @@
             text-align: center;
             font-size: 13px;
             margin-top: 25px;
-            color: #64748b;
+            color: var(--text-muted);
         }
         a {
             color: var(--primary);
             text-decoration: none;
             font-weight: 600;
+            transition: color 0.2s;
         }
         a:hover {
+            color: #60a5fa;
             text-decoration: underline;
+        }
+        .tabs {
+            display: flex;
+            margin-bottom: 25px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .tab {
+            flex: 1;
+            text-align: center;
+            padding: 12px 0;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            color: var(--text-muted);
+            transition: all 0.3s ease;
+            position: relative;
+        }
+        .tab:hover {
+            color: var(--text-main);
+        }
+        .tab.active {
+            color: #ffffff;
+        }
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(to right, #3b82f6, #60a5fa);
+            box-shadow: 0 0 8px #3b82f6;
         }
     </style>
 </head>
 <body>
+<!-- Glowing Background -->
+<div class="glow-circle glow-blue"></div>
+<div class="glow-circle glow-indigo"></div>
+
 <div class="card">
-    <h2>Operations Portal</h2>
+    <h2>Operations Control</h2>
     
+    <div class="tabs">
+        <div class="tab active" id="staff-tab" onclick="switchTab('staff')">Operations Staff</div>
+        <div class="tab" id="driver-tab" onclick="switchTab('driver')">Driver Portal</div>
+    </div>
+
     {% with messages = get_flashed_messages() %}
       {% if messages %}
         <div class="flash">{{ messages[0] }}</div>
       {% endif %}
     {% endwith %}
-    <form method="POST">
-        <div class="form-group">
-            <label>Username</label>
-            <input type="text" name="username" required autocomplete="off">
-        </div>
-        <div class="form-group">
-            <label>Password</label>
-            <input type="password" name="password" required>
-        </div>
-        <button type="submit">Sign In</button>
-    </form>
-    <p>System access restricted. <a href="/register">Request Account</a></p>
+
+    <div id="staff-form">
+        <form method="POST" action="/login">
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" name="username" required autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" name="password" required>
+            </div>
+            <button type="submit">Sign In</button>
+        </form>
+        <p>System access restricted. <a href="/register">Request Account</a></p>
+    </div>
+
+    <div id="driver-form" style="display: none;">
+        <form action="/driver/login" method="POST">
+            <div class="form-group">
+                <label>Driver</label>
+                <select name="driver_id" required>
+                    {% for d in drivers %}
+                    <option value="{{ d.driver_id }}">{{ d.driver_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Last 4 digits of phone</label>
+                <input type="text" name="phone_tail" maxlength="4" pattern="[0-9]{4}" placeholder="4567" required inputmode="numeric">
+            </div>
+            <button type="submit">Sign In</button>
+        </form>
+        <p style="margin-top: 25px;">Verify with the last 4 digits of your registered mobile number.</p>
+    </div>
 </div>
+
+<script>
+function switchTab(tabType) {
+    document.getElementById('staff-tab').classList.remove('active');
+    document.getElementById('driver-tab').classList.remove('active');
+    
+    document.getElementById('staff-form').style.display = 'none';
+    document.getElementById('driver-form').style.display = 'none';
+    
+    if (tabType === 'staff') {
+        document.getElementById('staff-tab').classList.add('active');
+        document.getElementById('staff-form').style.display = 'block';
+    } else {
+        document.getElementById('driver-tab').classList.add('active');
+        document.getElementById('driver-form').style.display = 'block';
+    }
+}
+
+window.onload = function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const tab = urlParams.get('tab');
+    if (tab === 'driver') {
+        switchTab('driver');
+    } else {
+        switchTab('staff');
+    }
+};
+</script>
 </body>
 </html>

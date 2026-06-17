@@ -35,7 +35,11 @@ SET FOREIGN_KEY_CHECKS = 1;
 
 INSERT INTO users (username, email, password_hash, role_id) VALUES
 ('planner_user', 'planner@logistics.com', 'scrypt:32768:8:1$3oODJ0IJIeh5RrSO$80664d851b7e1ec84e08f9e3189558bcb9c8e89eb97cd97d9d9109c4dd7d5383f6e6a12f7a4928526cdcd8c2de436803e744a8b4b7b120e524a18482f18a3931', 1),
+('planner_user2', 'planner2@logistics.com', 'scrypt:32768:8:1$3oODJ0IJIeh5RrSO$80664d851b7e1ec84e08f9e3189558bcb9c8e89eb97cd97d9d9109c4dd7d5383f6e6a12f7a4928526cdcd8c2de436803e744a8b4b7b120e524a18482f18a3931', 1),
+('planner_user3', 'planner3@logistics.com', 'scrypt:32768:8:1$3oODJ0IJIeh5RrSO$80664d851b7e1ec84e08f9e3189558bcb9c8e89eb97cd97d9d9109c4dd7d5383f6e6a12f7a4928526cdcd8c2de436803e744a8b4b7b120e524a18482f18a3931', 1),
 ('dispatcher_user', 'dispatcher@logistics.com', 'scrypt:32768:8:1$3oODJ0IJIeh5RrSO$80664d851b7e1ec84e08f9e3189558bcb9c8e89eb97cd97d9d9109c4dd7d5383f6e6a12f7a4928526cdcd8c2de436803e744a8b4b7b120e524a18482f18a3931', 2),
+('dispatcher_user2', 'dispatcher2@logistics.com', 'scrypt:32768:8:1$3oODJ0IJIeh5RrSO$80664d851b7e1ec84e08f9e3189558bcb9c8e89eb97cd97d9d9109c4dd7d5383f6e6a12f7a4928526cdcd8c2de436803e744a8b4b7b120e524a18482f18a3931', 2),
+('dispatcher_user3', 'dispatcher3@logistics.com', 'scrypt:32768:8:1$3oODJ0IJIeh5RrSO$80664d851b7e1ec84e08f9e3189558bcb9c8e89eb97cd97d9d9109c4dd7d5383f6e6a12f7a4928526cdcd8c2de436803e744a8b4b7b120e524a18482f18a3931', 2),
 ('manager_user', 'manager@logistics.com', 'scrypt:32768:8:1$3oODJ0IJIeh5RrSO$80664d851b7e1ec84e08f9e3189558bcb9c8e89eb97cd97d9d9109c4dd7d5383f6e6a12f7a4928526cdcd8c2de436803e744a8b4b7b120e524a18482f18a3931', 3);
 
 INSERT INTO drivers (driver_name, phone_number, status_code) VALUES
@@ -43,6 +47,10 @@ INSERT INTO drivers (driver_name, phone_number, status_code) VALUES
 ('Siti Aisha', '+65 9876 5432', 'Available'),
 ('Marcus Chen', '+65 8123 9876', 'Available'),
 ('Rohan Raj', '+65 9001 2345', 'Available'),
+('Raju Pillai', '+65 9222 3333', 'Available'),
+('Ahmad Ibrahim', '+65 9333 4444', 'Available'),
+('Lim Wei Jie', '+65 9444 5555', 'Available'),
+('Sarah Tan', '+65 9555 6666', 'Available'),
 ('Emergency Contractor', '+65 9999 0000', 'Available');
 
 -- Marcus (9876): ~2 km from Tuas port — demo: port pickup (slot freed) → warehouse delivery
@@ -50,13 +58,21 @@ INSERT INTO driver_locations (driver_id, latitude, longitude, heading, speed_kph
 (1, 1.3340, 103.7070, 45.0, 0.0, NOW()),
 (2, 1.3335, 103.7065, 120.0, 0.0, NOW()),
 (3, 1.2990, 103.6310, 180.0, 45.0, NOW()),
-(4, 1.3338, 103.7075, 310.0, 0.0, NOW());
+(4, 1.3338, 103.7075, 310.0, 0.0, NOW()),
+(5, 1.3320, 103.7050, 90.0, 0.0, NOW()),
+(6, 1.3315, 103.7040, 180.0, 0.0, NOW()),
+(7, 1.3310, 103.7030, 270.0, 0.0, NOW()),
+(8, 1.3305, 103.7020, 0.0, 0.0, NOW());
 
 INSERT INTO driver_schedules (driver_id, day_of_week, shift_start, shift_end) VALUES
 (1, 0, '06:00:00', '18:00:00'), (1, 2, '06:00:00', '18:00:00'), (1, 4, '06:00:00', '18:00:00'), (1, 6, '06:00:00', '18:00:00'),
 (2, 0, '18:00:00', '06:00:00'), (2, 2, '18:00:00', '06:00:00'), (2, 4, '18:00:00', '06:00:00'), (2, 6, '18:00:00', '06:00:00'),
 (3, 1, '06:00:00', '18:00:00'), (3, 3, '06:00:00', '18:00:00'), (3, 5, '06:00:00', '18:00:00'),
-(4, 1, '18:00:00', '06:00:00'), (4, 3, '18:00:00', '06:00:00'), (4, 5, '18:00:00', '06:00:00');
+(4, 1, '18:00:00', '06:00:00'), (4, 3, '18:00:00', '06:00:00'), (4, 5, '18:00:00', '06:00:00'),
+(5, 0, '06:00:00', '18:00:00'), (5, 2, '06:00:00', '18:00:00'), (5, 4, '06:00:00', '18:00:00'), (5, 6, '06:00:00', '18:00:00'),
+(6, 0, '18:00:00', '06:00:00'), (6, 2, '18:00:00', '06:00:00'), (6, 4, '18:00:00', '06:00:00'), (6, 6, '18:00:00', '06:00:00'),
+(7, 1, '06:00:00', '18:00:00'), (7, 3, '06:00:00', '18:00:00'), (7, 5, '06:00:00', '18:00:00'),
+(8, 1, '18:00:00', '06:00:00'), (8, 3, '18:00:00', '06:00:00'), (8, 5, '18:00:00', '06:00:00');
 
 INSERT INTO vessels (vessel_id, vessel_name) VALUES
 ('VES-COSCO-88', 'Cosco Shipping Alps'),

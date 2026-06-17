@@ -6,6 +6,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pymysql
+pymysql.install_as_MySQLdb()
+
 import MySQLdb
 from dotenv import load_dotenv
 
@@ -17,13 +20,20 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 def split_sql(text):
     statements = []
     buf = []
+    delimiter = ';'
     for line in text.splitlines():
         stripped = line.strip()
         if stripped.startswith('--') or not stripped:
             continue
+        if stripped.lower().startswith('delimiter '):
+            delimiter = stripped.split()[1]
+            continue
         buf.append(line)
-        if stripped.endswith(';'):
-            statements.append('\n'.join(buf))
+        if stripped.endswith(delimiter):
+            stmt = '\n'.join(buf)
+            if stmt.endswith(delimiter):
+                stmt = stmt[:-len(delimiter)]
+            statements.append(stmt)
             buf = []
     return statements
 
@@ -34,6 +44,29 @@ def run_file(cursor, path):
             cursor.execute(stmt)
 
 
+def run_setup(host, user, password, database):
+    print(f'Connecting to MySQL at {host} as {user}…')
+    try:
+        conn = MySQLdb.connect(host=host, user=user, password=password, charset='utf8mb4')
+    except MySQLdb.OperationalError as exc:
+        print(f'Connection failed: {exc}')
+        raise exc
+
+    cursor = conn.cursor()
+    try:
+        print('Applying schema.sql…')
+        run_file(cursor, os.path.join(ROOT, 'schema.sql'))
+        conn.commit()
+        conn.select_db(database)
+        print('Applying seed.sql…')
+        run_file(cursor, os.path.join(ROOT, 'seed.sql'))
+        conn.commit()
+        print(f'Database "{database}" is ready.')
+    finally:
+        cursor.close()
+        conn.close()
+
+
 def main():
     parser = argparse.ArgumentParser(description='Create escalation_db schema and load seed data.')
     parser.add_argument('--host', default=os.getenv('DB_HOST', 'localhost'))
@@ -42,28 +75,15 @@ def main():
     parser.add_argument('--database', default=os.getenv('DB_NAME', 'escalation_db'))
     args = parser.parse_args()
 
-    print(f'Connecting to MySQL at {args.host} as {args.user}…')
     try:
-        conn = MySQLdb.connect(host=args.host, user=args.user, passwd=args.password, charset='utf8mb4')
-    except MySQLdb.OperationalError as exc:
-        print(f'Connection failed: {exc}')
-        print('Set DB_PASSWORD in .env or pass --password (PythonAnywhere: use Databases tab credentials).')
+        run_setup(args.host, args.user, args.password, args.database)
+    except Exception as exc:
+        print(f"Error during setup: {exc}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
-
-    cursor = conn.cursor()
-    try:
-        print('Applying schema.sql…')
-        run_file(cursor, os.path.join(ROOT, 'schema.sql'))
-        conn.commit()
-        conn.select_db(args.database)
-        print('Applying seed.sql…')
-        run_file(cursor, os.path.join(ROOT, 'seed.sql'))
-        conn.commit()
-        print(f'Database "{args.database}" is ready.')
-    finally:
-        cursor.close()
-        conn.close()
 
 
 if __name__ == '__main__':
     main()
+

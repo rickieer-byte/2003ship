@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leave Management Console - Last Mile Logistics</title>
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --primary-dark: #0f172a;
+            --bg-main: #f4f6f9;
+            --surface: #ffffff;
+            --text-dark: #334155;
+            --border: #e5e7eb;
+            --color-green: #10b981;
+            --color-yellow: #f59e0b;
+            --color-red: #ef4444;
+            --color-blue: #3b82f6;
+        }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-dark);
+            margin: 0;
+            padding: 30px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        header {
+            background: var(--surface);
+            padding: 20px 30px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        h1 { color: var(--primary); margin: 0; font-size: 24px; }
+        .nav-links a {
+            color: var(--primary);
+            text-decoration: none;
+            font-weight: bold;
+            margin-left: 15px;
+        }
+        .nav-links a:hover { text-decoration: underline; }
+        
+        /* Flash messages styling */
+        .flashes {
+            list-style-type: none;
+            padding: 0;
+            margin: 0 0 20px 0;
+        }
+        .flash {
+            padding: 12px 18px;
+            border-radius: 6px;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+        .flash.success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+        .flash.danger { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+        .flash.info { background: #eff6ff; color: #1e40af; border: 1px solid #bfdbfe; }
+
+        .leave-layout {
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 25px;
+        }
+        @media(max-width: 900px) {
+            .leave-layout { grid-template-columns: 1fr; }
+        }
+
+        .card {
+            background: var(--surface);
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .card h2 {
+            margin-top: 0;
+            color: var(--primary);
+            font-size: 18px;
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
+
+        /* Form styling */
+        .form-group {
+            margin-bottom: 15px;
+        }
+        .form-group label {
+            display: block;
+            font-weight: 600;
+            margin-bottom: 6px;
+            font-size: 13px;
+            color: #475569;
+        }
+        .form-control {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-family: inherit;
+            font-size: 14px;
+        }
+        .form-control:focus {
+            outline: none;
+            border-color: var(--primary);
+            box-shadow: 0 0 0 2px rgba(30,58,138,0.1);
+        }
+        .btn {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            font-size: 14px;
+            width: 100%;
+            transition: background 0.2s;
+        }
+        .btn:hover { background-color: #1d4ed8; }
+        .btn-cancel {
+            background-color: #ef4444;
+            color: white;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .btn-cancel:hover { background-color: #b91c1c; }
+
+        /* Table Grid */
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th, td { padding: 12px 15px; border-bottom: 1px solid var(--border); font-size: 14px; }
+        th { background: var(--primary-dark); color: white; text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; }
+        tr:hover { background-color: #f8fafc; }
+
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 10px;
+            display: inline-block;
+            text-transform: uppercase;
+        }
+        .badge-Planner { background: #dbeafe; color: #1e40af; }
+        .badge-Dispatcher { background: #e0e7ff; color: #4338ca; }
+        .badge-Driver { background: #fef3c7; color: #92400e; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <div>
+            <h1>Staff Leave Center</h1>
+            <span style="font-size: 13px; color:#64748b;">Schedule resource absences with SQL trigger verification</span>
+        </div>
+        <div class="nav-links">
+            <a href="/">← Operations Hub</a>
+            <a href="/drivers">Drivers</a>
+            <a href="/walkthroughs" style="color: #0284c7; font-weight: bold;">Lecturer Walkthroughs</a>
+        </div>
+    </header>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <ul class="flashes">
+                {% for category, message in messages %}
+                    <li class="flash {{ category }}">{{ message }}</li>
+                {% endfor %}
+            </ul>
+        {% endif %}
+    {% endwith %}
+
+    <div class="leave-layout">
+        <!-- Application Form Column -->
+        <div class="card">
+            <h2>Apply for Leave</h2>
+            <form action="/leave/apply" method="POST">
+                <div class="form-group">
+                    <label for="employee_type">Employee Type</label>
+                    <select name="employee_type" id="employee_type" class="form-control" onchange="toggleEmployeeSelects()">
+                        <option value="Planner">Planner</option>
+                        <option value="Dispatcher">Dispatcher</option>
+                        <option value="Driver">Driver</option>
+                    </select>
+                </div>
+
+                <!-- Planner Select Dropdown -->
+                <div class="form-group" id="planner_select_group">
+                    <label for="planner_id">Select Planner</label>
+                    <select name="planner_id" id="planner_id" class="form-control">
+                        {% for p in planners %}
+                            <option value="{{ p.user_id }}">{{ p.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Dispatcher Select Dropdown -->
+                <div class="form-group" id="dispatcher_select_group" style="display: none;">
+                    <label for="dispatcher_id">Select Dispatcher</label>
+                    <select name="dispatcher_id" id="dispatcher_id" class="form-control">
+                        {% for d in dispatchers %}
+                            <option value="{{ d.user_id }}">{{ d.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <!-- Driver Select Dropdown -->
+                <div class="form-group" id="driver_select_group" style="display: none;">
+                    <label for="driver_id">Select Driver</label>
+                    <select name="driver_id" id="driver_id" class="form-control">
+                        {% for dr in drivers %}
+                            <option value="{{ dr.driver_id }}">{{ dr.driver_name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="leave_date">Leave Date</label>
+                    <input type="date" name="leave_date" id="leave_date" class="form-control" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="reason">Reason (Optional)</label>
+                    <input type="text" name="reason" id="reason" class="form-control" placeholder="E.g., Medical Appointment, Vacation">
+                </div>
+
+                <button type="submit" class="btn">Submit Request</button>
+            </form>
+        </div>
+
+        <!-- Approved Leave Schedule Column -->
+        <div class="card">
+            <h2>Leave Schedule &amp; Approved Absences</h2>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Employee Type</th>
+                            <th>Name</th>
+                            <th>Reason</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for leave in leaves %}
+                        <tr>
+                            <td><strong>{{ leave.leave_date }}</strong></td>
+                            <td><span class="badge badge-{{ leave.employee_type }}">{{ leave.employee_type }}</span></td>
+                            <td>
+                                {% if leave.employee_type == 'Driver' %}
+                                    {{ leave.driver_name }}
+                                {% else %}
+                                    {{ leave.user_name }}
+                                {% endif %}
+                            </td>
+                            <td style="color: #64748b;">{{ leave.reason or '—' }}</td>
+                            <td>
+                                <form action="/leave/cancel/{{ leave.leave_id }}" method="POST" onsubmit="return confirm('Are you sure you want to cancel this leave request?');">
+                                    <button type="submit" class="btn-cancel">Cancel</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="5" style="text-align: center; color: #64748b; padding: 30px 0;">No approved leave requests registered.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function toggleEmployeeSelects() {
+    const type = document.getElementById('employee_type').value;
+    
+    document.getElementById('planner_select_group').style.display = 'none';
+    document.getElementById('dispatcher_select_group').style.display = 'none';
+    document.getElementById('driver_select_group').style.display = 'none';
+    
+    if (type === 'Planner') {
+        document.getElementById('planner_select_group').style.display = 'block';
+    } else if (type === 'Dispatcher') {
+        document.getElementById('dispatcher_select_group').style.display = 'block';
+    } else if (type === 'Driver') {
+        document.getElementById('driver_select_group').style.display = 'block';
+    }
+}
+</script>
+</body>
+</html>

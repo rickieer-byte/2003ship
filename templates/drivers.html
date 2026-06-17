@@ -117,6 +117,8 @@
         <div class="nav-links">
             <a href="/">← Operations Hub</a>
             <a href="/tracking">Live Map</a>
+            <a href="/leave">Leave Management</a>
+            <a href="/walkthroughs" style="color: #0369a1; font-weight: bold;">Lecturer Walkthroughs</a>
             {% if role == 'Fleet Manager' %}
                 <a href="/fleet">Manage Fleet</a>
             {% endif %}
@@ -178,6 +180,8 @@
                             <span class="badge status-On-Delivery">On Delivery</span>
                         {% elif d.current_status == 'Offline' %}
                             <span class="badge status-Offline">Offline</span>
+                        {% elif d.current_status == 'On Leave' %}
+                            <span class="badge status-Offline" style="background: #fef3c7; color: #92400e;">On Leave</span>
                         {% else %}
                             <span class="hours-text">—</span>
                         {% endif %}

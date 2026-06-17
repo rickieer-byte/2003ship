@@ -1,3 +1,6 @@
+import pymysql
+pymysql.install_as_MySQLdb()
+
 import datetime
 import uuid
 import os
@@ -13,6 +16,30 @@ from services.locations import upsert_driver_location
 from services.port_slots import EMERGENCY_CONTRACTOR_NAME
 from services.shifts import driver_is_on_shift as shift_driver_is_on_shift
 
+from services.users import get_role_id_by_name, create_user, get_user_by_username
+from services.leave import (
+    fetch_all_leaves, apply_leave, cancel_leave,
+    fetch_eligible_planners, fetch_eligible_dispatchers, fetch_eligible_drivers
+)
+from services.drivers import (
+    is_fleet_driver, fetch_drivers_for_roster, fetch_all_drivers_live,
+    fetch_live_drivers_telemetry, fetch_driver_by_id, add_driver as db_add_driver,
+    update_driver as db_update_driver, remove_driver as db_remove_driver, fetch_driver_schedules,
+    update_driver_schedule as db_update_driver_schedule, enrich_drivers_with_schedules,
+    get_fleet_status, get_next_shift_hint, pick_nearest_dispatchable_driver, update_driver_status
+)
+from services.containers import (
+    fetch_containers_dashboard, fetch_inbound_vessels, fetch_fleet_savings,
+    fetch_vessel_telemetry_live, fetch_container_by_number,
+    record_dispatch_assignment, find_pending_assignment, find_accepted_assignment,
+    allocate_vessel_container, allocate_emergency_container, fetch_allocation_by_container,
+    insert_delivery_completion, update_assignment_completed, delete_allocation,
+    delete_container, log_event, fetch_distinct_event_containers, fetch_events_for_replay,
+    fetch_driver_active_job, fetch_active_job_for_slot, insert_job_rejection,
+    update_assignment_rejected, reset_allocation_after_rejection, accept_job_allocation,
+    update_assignment_accepted, fetch_all_containers_etas, fetch_carrier_benchmarks
+)
+
 app = Flask(__name__)
 app.config.from_object(Config)
 mysql = MySQL(app)
@@ -24,12 +51,6 @@ DEMURRAGE_HOURLY_RATE = 15.00        # Carrier demurrage after post-discharge gr
 GRACE_PERIOD_HOURS = 48              # Free time after vessel discharge before demurrage accrues
 REJECTION_COOLDOWN_HOURS = 2         # Auto-dispatch blackout after a driver declines a job
 DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-
-
-def is_fleet_driver(driver):
-    """Exclude the synthetic emergency-hire contractor from roster UIs."""
-    name = driver.get('driver_name') if isinstance(driver, dict) else driver
-    return name != EMERGENCY_CONTRACTOR_NAME
 
 # Map reference points exposed to the tracking UI
 MAP_PORT = {'lat': 1.3015, 'lng': 103.6340, 'label': 'Tuas Port Terminal'}
@@ -59,206 +80,6 @@ def _as_time(value):
     if isinstance(value, datetime.timedelta):
         return (datetime.datetime.min + value).time()
     return value
-
-def driver_is_on_shift(driver_id, cursor, as_of=None):
-    return shift_driver_is_on_shift(driver_id, cursor, as_of)
-
-def driver_has_active_allocation(driver_id, cursor):
-    cursor.execute("""
-        SELECT 1 FROM truck_allocations
-        WHERE driver_id = %s AND dispatch_status_code IN ('Dispatched', 'At Warehouse')
-        LIMIT 1
-    """, (driver_id,))
-    return cursor.fetchone() is not None
-
-def driver_in_rejection_cooldown(driver_id, cursor, as_of=None):
-    """Drivers who rejected a job within the cooldown window are skipped for auto-dispatch."""
-    as_of = as_of or datetime.datetime.now()
-    cursor.execute(
-        """
-        SELECT 1 FROM job_rejections jr
-        JOIN dispatch_assignments da ON da.assignment_id = jr.assignment_id
-        WHERE da.driver_id = %s
-          AND jr.rejected_at > DATE_SUB(%s, INTERVAL %s HOUR)
-        LIMIT 1
-        """,
-        (driver_id, as_of, REJECTION_COOLDOWN_HOURS),
-    )
-    return cursor.fetchone() is not None
-
-def driver_is_dispatchable(driver_id, status_code, cursor, as_of=None):
-    if status_code != 'Available':
-        return False
-    if driver_has_active_allocation(driver_id, cursor):
-        return False
-    if driver_in_rejection_cooldown(driver_id, cursor, as_of):
-        return False
-    return driver_is_on_shift(driver_id, cursor, as_of)
-
-def count_dispatchable_drivers(cursor, as_of=None):
-    cursor.execute("SELECT driver_id, status_code FROM drivers")
-    return sum(
-        1 for d in cursor.fetchall()
-        if driver_is_dispatchable(d['driver_id'], d['status_code'], cursor, as_of)
-    )
-
-def pick_nearest_dispatchable_driver(cursor, port_lat, port_lng):
-    cursor.execute("""
-        SELECT d.driver_id, d.driver_name, d.phone_number, d.status_code,
-               dl.latitude, dl.longitude
-        FROM drivers d
-        LEFT JOIN driver_locations dl ON dl.driver_id = d.driver_id
-        WHERE d.status_code = 'Available' AND d.driver_name != 'Emergency Contractor'
-    """)
-    best = None
-    best_dist = None
-    for candidate in cursor.fetchall():
-        if not driver_is_dispatchable(candidate['driver_id'], candidate['status_code'], cursor):
-            continue
-        lat = float(candidate['latitude'] or MAP_DEPOT['lat'])
-        lng = float(candidate['longitude'] or MAP_DEPOT['lng'])
-        dist = haversine_km(lat, lng, port_lat, port_lng)
-        if best is None or dist < best_dist:
-            best = candidate
-            best_dist = dist
-    if not best:
-        return None, None, None
-    return (
-        best['driver_id'],
-        best['driver_name'],
-        best['phone_number'].replace(' ', '')[-4:],
-    )
-
-def fetch_driver_schedules(cursor):
-    cursor.execute("""
-        SELECT driver_id, day_of_week,
-               TIME_FORMAT(shift_start, '%H:%i') AS shift_start,
-               TIME_FORMAT(shift_end, '%H:%i') AS shift_end
-        FROM driver_schedules
-        ORDER BY driver_id, day_of_week
-    """)
-    schedule_map = {}
-    for row in cursor.fetchall():
-        schedule_map.setdefault(row['driver_id'], {})[row['day_of_week']] = row
-    return schedule_map
-
-def format_schedule_summary(schedule_map, driver_id):
-    days = schedule_map.get(driver_id, {})
-    if not days:
-        return "No schedule set"
-    parts = []
-    for dow in sorted(days):
-        d = days[dow]
-        parts.append(f"{DAY_LABELS[dow]} {d['shift_start']}–{d['shift_end']}")
-    return ", ".join(parts)
-
-def compute_fleet_savings(cursor):
-    cursor.execute("""
-        SELECT c.lfd_datetime, c.discharge_datetime, t.allocated_at
-        FROM containers c
-        JOIN truck_allocations t ON c.container_number = t.container_number
-        WHERE t.dispatch_status_code = 'Dispatched' AND t.driver_id IS NOT NULL
-    """)
-    internal_dispatches = cursor.fetchall()
-
-    fees_averted = 0.0
-    on_time_count = 0
-    for row in internal_dispatches:
-        lfd = row['lfd_datetime']
-        allocated = row['allocated_at']
-        if allocated <= lfd:
-            on_time_count += 1
-        counterfactual_at = lfd + datetime.timedelta(hours=24)
-        fees_averted += calculate_port_fees(lfd, row['discharge_datetime'], as_of=counterfactual_at)['total']
-
-    emergency_savings = on_time_count * EMERGENCY_DRIVER_FLAT_RATE
-    return {
-        'on_time_dispatches': on_time_count,
-        'fees_averted': round(fees_averted, 2),
-        'emergency_savings': round(emergency_savings, 2),
-        'total_savings': round(fees_averted + emergency_savings, 2),
-    }
-
-def enrich_drivers_with_schedules(drivers, schedule_map, cursor, as_of=None):
-    as_of = as_of or datetime.datetime.now()
-    enriched = []
-    for driver in drivers:
-        d = dict(driver)
-        driver_id = driver['driver_id']
-        d['schedule_summary'] = format_schedule_summary(schedule_map, driver_id)
-        days = schedule_map.get(driver_id, {})
-        dow = as_of.weekday()
-        d['on_shift'] = driver_is_on_shift(driver_id, cursor, as_of)
-        if dow in days:
-            d['today_hours'] = f"{days[dow]['shift_start']} – {days[dow]['shift_end']}"
-        elif days:
-            d['today_hours'] = "Off today"
-        else:
-            d['today_hours'] = "Unscheduled"
-        enriched.append(d)
-    return enriched
-
-def get_fleet_status(cursor, as_of=None):
-    as_of = as_of or datetime.datetime.now()
-    cursor.execute("SELECT driver_id, status_code FROM drivers")
-    dispatchable = off_shift_available = on_delivery = offline = 0
-
-    for driver in cursor.fetchall():
-        if not is_fleet_driver(driver):
-            continue
-        status = driver['status_code']
-        if status == 'On Delivery' or driver_has_active_allocation(driver['driver_id'], cursor):
-            on_delivery += 1
-        elif status == 'Offline':
-            offline += 1
-        elif driver_is_dispatchable(driver['driver_id'], status, cursor, as_of):
-            dispatchable += 1
-        elif status == 'Available':
-            off_shift_available += 1
-
-    if dispatchable > 0:
-        reason = None
-    elif off_shift_available > 0 and on_delivery == 0:
-        reason = 'off_shift'
-    elif off_shift_available > 0 and on_delivery > 0:
-        reason = 'off_shift_and_busy'
-    elif on_delivery > 0:
-        reason = 'all_busy'
-    else:
-        reason = 'unavailable'
-
-    return {
-        'dispatchable': dispatchable,
-        'off_shift_available': off_shift_available,
-        'on_delivery': on_delivery,
-        'offline': offline,
-        'depletion_reason': reason,
-    }
-
-def get_next_shift_hint(cursor, as_of=None):
-    as_of = as_of or datetime.datetime.now()
-    cursor.execute("""
-        SELECT ds.day_of_week, TIME_FORMAT(ds.shift_start, '%H:%i') AS shift_start, d.driver_name
-        FROM driver_schedules ds
-        JOIN drivers d ON d.driver_id = ds.driver_id
-        WHERE d.status_code = 'Available'
-        ORDER BY ds.day_of_week, ds.shift_start
-    """)
-    rows = cursor.fetchall()
-    today = as_of.weekday()
-    now_time = as_of.time()
-
-    for offset in range(8):
-        dow = (today + offset) % 7
-        for row in rows:
-            if row['day_of_week'] != dow:
-                continue
-            start = datetime.datetime.strptime(row['shift_start'], '%H:%M').time()
-            if offset == 0 and start <= now_time:
-                continue
-            day_label = 'Today' if offset == 0 else DAY_LABELS[dow]
-            return f"Next shift: {row['driver_name']} — {day_label} at {row['shift_start']}"
-    return None
 
 DEPLETION_MESSAGES = {
     'off_shift': {
@@ -307,68 +128,6 @@ def build_emergency_response(cursor, container, hours_until_breach):
         'financial_recommendation': 'PROCEED' if EMERGENCY_DRIVER_FLAT_RATE < fees['total'] else 'HOLD',
     }
 
-def log_event(cursor, container_number, source_api, event_type, payload):
-    cursor.execute(
-        "INSERT INTO events (container_number, source_api, event_type, raw_payload) VALUES (%s, %s, %s, %s)",
-        (container_number, source_api, event_type, json.dumps(payload)),
-    )
-
-def record_dispatch_assignment(cursor, allocation_id, driver_id):
-    """Create a pending assignment row; supersede any prior pending offer on this allocation."""
-    cursor.execute(
-        """
-        UPDATE dispatch_assignments
-        SET outcome_code = 'superseded', outcome_at = NOW()
-        WHERE allocation_id = %s AND outcome_code = 'pending'
-        """,
-        (allocation_id,),
-    )
-    cursor.execute(
-        """
-        INSERT INTO dispatch_assignments (allocation_id, driver_id)
-        VALUES (%s, %s)
-        """,
-        (allocation_id, driver_id),
-    )
-    return cursor.lastrowid
-
-def find_pending_assignment(cursor, allocation_id, driver_id):
-    cursor.execute(
-        """
-        SELECT assignment_id FROM dispatch_assignments
-        WHERE allocation_id = %s AND driver_id = %s AND outcome_code = 'pending'
-        ORDER BY assigned_at DESC LIMIT 1
-        """,
-        (allocation_id, driver_id),
-    )
-    row = cursor.fetchone()
-    return row['assignment_id'] if row else None
-
-def find_accepted_assignment(cursor, allocation_id, driver_id=None):
-    query = """
-        SELECT assignment_id FROM dispatch_assignments
-        WHERE allocation_id = %s AND outcome_code = 'accepted'
-    """
-    params = [allocation_id]
-    if driver_id is not None:
-        query += " AND driver_id = %s"
-        params.append(driver_id)
-    query += " ORDER BY outcome_at DESC LIMIT 1"
-    cursor.execute(query, tuple(params))
-    row = cursor.fetchone()
-    return row['assignment_id'] if row else None
-
-def fetch_inbound_vessels(cursor):
-    cursor.execute("""
-        SELECT vessel_name, voyage_number, tracking_status, speed_knots,
-               DATE_FORMAT(eta_datetime, '%Y-%m-%d %H:%i') AS eta_display,
-               DATE_FORMAT(eta_datetime, '%Y-%m-%dT%H:%i:%s') AS eta_iso
-        FROM v_vessels_live
-        WHERE tracking_status != 'At Berth'
-        ORDER BY eta_datetime ASC
-        LIMIT 10
-    """)
-    return cursor.fetchall()
 
 def enrich_containers_with_eta(containers):
     for c in containers:
@@ -393,10 +152,60 @@ def get_driver_from_cookie():
     if not driver_id:
         return None
     cursor = mysql.connection.cursor()
-    cursor.execute("SELECT * FROM v_drivers_live WHERE driver_id = %s", (driver_id,))
-    driver = cursor.fetchone()
+    driver = fetch_driver_by_id(cursor, driver_id)
     cursor.close()
     return driver
+
+def auto_init_db():
+    try:
+        import MySQLdb
+        try:
+            conn = MySQLdb.connect(
+                host=Config.MYSQL_HOST,
+                user=Config.MYSQL_USER,
+                password=Config.MYSQL_PASSWORD,
+                charset='utf8mb4'
+            )
+        except Exception as e:
+            print(f"[*] Database auto-init check: MySQL server at {Config.MYSQL_HOST} not reachable: {e}")
+            return
+            
+        cursor = conn.cursor()
+        try:
+            cursor.execute(f"SHOW DATABASES LIKE '{Config.MYSQL_DB}'")
+            db_exists = cursor.fetchone()
+            
+            should_setup = False
+            if not db_exists:
+                print(f"[*] Database auto-init check: Database '{Config.MYSQL_DB}' does not exist. Initializing...")
+                should_setup = True
+            else:
+                conn.select_db(Config.MYSQL_DB)
+                cursor.execute("SHOW TABLES LIKE 'users'")
+                has_users_table = cursor.fetchone()
+                if not has_users_table:
+                    print("[*] Database auto-init check: Tables not found. Initializing...")
+                    should_setup = True
+                else:
+                    cursor.execute("SELECT COUNT(*) AS cnt FROM users")
+                    cnt = cursor.fetchone()[0] if hasattr(cursor, 'fetchone') else 0
+                    if cnt == 0:
+                        print("[*] Database auto-init check: Database is empty. Initializing...")
+                        should_setup = True
+            
+            if should_setup:
+                from db.setup import run_setup
+                run_setup(Config.MYSQL_HOST, Config.MYSQL_USER, Config.MYSQL_PASSWORD, Config.MYSQL_DB)
+                print("[*] Database auto-init check: Initialization complete.")
+            else:
+                print("[*] Database auto-init check: Database is already initialized and seeded.")
+        finally:
+            cursor.close()
+            conn.close()
+    except Exception as e:
+        print(f"[*] Database auto-init check failed: {e}")
+
+auto_init_db()
 
 # Server Instance Run Token Key Generation
 SERVER_RUN_ID = str(uuid.uuid4())
@@ -498,11 +307,8 @@ def register():
         hashed_password = generate_password_hash(password)
         cursor = mysql.connection.cursor()
         try:
-            cursor.execute("SELECT role_id FROM roles WHERE role_name = %s", (role,))
-            role_row = cursor.fetchone()
-            role_id = role_row['role_id'] if role_row else 1
-            cursor.execute("INSERT INTO users (username, email, password_hash, role_id) VALUES (%s, %s, %s, %s)", 
-                           (username, email, hashed_password, role_id))
+            role_id = get_role_id_by_name(cursor, role)
+            create_user(cursor, username, email, hashed_password, role_id)
             mysql.connection.commit()
             flash("Account provisioned successfully! Please sign in.", "success")
             return redirect(url_for('login'))
@@ -520,16 +326,23 @@ def login():
         password_provided = request.form['password']
         
         cursor = mysql.connection.cursor()
-        cursor.execute("""
-            SELECT u.*, r.role_name AS role
-            FROM users u
-            JOIN roles r ON r.role_id = u.role_id
-            WHERE u.username = %s
-        """, (username,))
-        user = cursor.fetchone()
+        user = get_user_by_username(cursor, username)
         cursor.close()
         
         if user and check_password_hash(user['password_hash'], password_provided):
+            # Verify if user is currently registered as on leave today
+            cursor = mysql.connection.cursor()
+            cursor.execute(
+                "SELECT 1 FROM leave_requests WHERE user_id = %s AND leave_date = CURDATE()",
+                (user['user_id'],)
+            )
+            on_leave_today = cursor.fetchone() is not None
+            cursor.close()
+            
+            if on_leave_today:
+                flash(f"Access denied: {user['username']} is registered as on leave today.", "danger")
+                return redirect(url_for('login'))
+                
             # PATCH: Cast user['user_id'] directly to a standard string format to satisfy standard JWT subject specifications
             payload = {
                 "sub": str(user['user_id']),
@@ -551,14 +364,221 @@ def login():
             return response
         else:
             flash("Invalid credentials token supplied.", "danger")
-    return render_template('login.html')
+            
+    cursor = mysql.connection.cursor()
+    drivers = fetch_eligible_drivers(cursor)
+    cursor.close()
+    return render_template('login.html', drivers=drivers)
 
 @app.route('/logout')
 def logout():
     flash("Session terminated. Secure exit complete.", "info")
     response = make_response(redirect(url_for('login')))
     response.delete_cookie("access_token", path="/")
+    response.delete_cookie("driver_id", path="/")
     return response
+
+# -------------------------------------------------------------
+# STAFF LEAVE MANAGEMENT SYSTEM
+# -------------------------------------------------------------
+@app.route('/leave', methods=['GET'])
+@requires_authenticated_session()
+def leave_dashboard():
+    cursor = mysql.connection.cursor()
+    leaves = fetch_all_leaves(cursor)
+    planners = fetch_eligible_planners(cursor)
+    dispatchers = fetch_eligible_dispatchers(cursor)
+    drivers = fetch_eligible_drivers(cursor)
+    cursor.close()
+    return render_template(
+        'leave.html',
+        leaves=leaves,
+        planners=planners,
+        dispatchers=dispatchers,
+        drivers=drivers,
+        username=g.current_user_username,
+        role=g.current_user_role
+    )
+
+@app.route('/leave/apply', methods=['POST'])
+@requires_authenticated_session()
+def leave_apply():
+    employee_type = request.form.get('employee_type')
+    leave_date_str = request.form.get('leave_date')
+    reason = request.form.get('reason', '')
+    
+    if employee_type == 'Planner':
+        employee_id = request.form.get('planner_id')
+    elif employee_type == 'Dispatcher':
+        employee_id = request.form.get('dispatcher_id')
+    elif employee_type == 'Driver':
+        employee_id = request.form.get('driver_id')
+    else:
+        flash("Invalid employee category selected.", "danger")
+        return redirect(url_for('leave_dashboard'))
+        
+    if not employee_id or not leave_date_str:
+        flash("Missing employee selection or leave date.", "danger")
+        return redirect(url_for('leave_dashboard'))
+        
+    cursor = mysql.connection.cursor()
+    try:
+        apply_leave(cursor, employee_type, int(employee_id), leave_date_str, reason)
+        mysql.connection.commit()
+        flash("Leave request successfully approved.", "success")
+    except ValueError as exc:
+        mysql.connection.rollback()
+        flash(str(exc), "danger")
+    except Exception as exc:
+        mysql.connection.rollback()
+        flash(f"Unexpected database error: {exc}", "danger")
+    finally:
+        cursor.close()
+        
+    return redirect(url_for('leave_dashboard'))
+
+@app.route('/leave/cancel/<int:leave_id>', methods=['POST'])
+@requires_authenticated_session()
+def leave_cancel(leave_id):
+    cursor = mysql.connection.cursor()
+    try:
+        cancel_leave(cursor, leave_id)
+        mysql.connection.commit()
+        flash("Leave request cancelled successfully.", "info")
+    except Exception as exc:
+        mysql.connection.rollback()
+        flash(f"Failed to cancel leave: {exc}", "danger")
+    finally:
+        cursor.close()
+    return redirect(url_for('leave_dashboard'))
+
+# -------------------------------------------------------------
+# LECTURER INTERACTIVE WALKTHROUGHS
+# -------------------------------------------------------------
+@app.route('/walkthroughs', methods=['GET'])
+def walkthroughs_dashboard():
+    token = request.cookies.get("access_token")
+    username = None
+    role = None
+    if token:
+        try:
+            payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], leeway=10)
+            if payload.get("run_id") == SERVER_RUN_ID:
+                username = payload.get("username")
+                role = payload.get("role")
+        except Exception:
+            pass
+    return render_template('walkthroughs.html', username=username, role=role)
+
+def generate_auto_login_token(user_id, username, role):
+    payload = {
+        "sub": str(user_id),
+        "username": username,
+        "role": role,
+        "run_id": SERVER_RUN_ID,
+        "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+
+@app.route('/api/walkthrough/setup/<int:flow_id>', methods=['POST'])
+def walkthrough_setup(flow_id):
+    from db.setup import run_setup
+    cursor = mysql.connection.cursor()
+    try:
+        run_setup(Config.MYSQL_HOST, Config.MYSQL_USER, Config.MYSQL_PASSWORD, Config.MYSQL_DB)
+        
+        target_url = url_for('mis_dashboard')
+        login_user = None
+        login_driver_id = None
+        
+        if flow_id == 1:
+            login_user = (2, 'dispatcher_user', 'Dispatcher')
+            target_url = url_for('mis_dashboard')
+            
+        elif flow_id == 2:
+            login_user = (2, 'dispatcher_user', 'Dispatcher')
+            cursor.execute("""
+                INSERT INTO truck_allocations (container_number, driver_id, urgency_score, dispatch_status_code)
+                VALUES ('NYKU9012455', 1, 95, 'Dispatched')
+            """)
+            cursor.execute("SELECT allocation_id FROM truck_allocations WHERE container_number = 'NYKU9012455'")
+            alloc = cursor.fetchone()
+            cursor.execute("INSERT INTO dispatch_assignments (allocation_id, driver_id, outcome_code) VALUES (%s, 1, 'pending')", (alloc['allocation_id'],))
+            cursor.execute("UPDATE drivers SET status_code = 'On Delivery' WHERE driver_id = 1")
+            mysql.connection.commit()
+            
+            login_driver_id = 1
+            target_url = url_for('driver_portal')
+            
+        elif flow_id == 3:
+            login_user = (2, 'dispatcher_user', 'Dispatcher')
+            cursor.execute("UPDATE drivers SET status_code = 'Offline' WHERE driver_name != 'Emergency Contractor'")
+            mysql.connection.commit()
+            target_url = url_for('mis_dashboard')
+            
+        elif flow_id == 4:
+            login_user = (3, 'manager_user', 'Fleet Manager')
+            target_url = url_for('leave_dashboard')
+            
+        elif flow_id == 5:
+            login_user = (3, 'manager_user', 'Fleet Manager')
+            tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+            cursor.execute("INSERT INTO leave_requests (employee_type, driver_id, leave_date, reason) VALUES ('Driver', 1, %s, 'Vacation')", (tomorrow,))
+            cursor.execute("INSERT INTO leave_requests (employee_type, driver_id, leave_date, reason) VALUES ('Driver', 2, %s, 'Sick')", (tomorrow,))
+            mysql.connection.commit()
+            target_url = url_for('leave_dashboard')
+            
+        elif flow_id == 6:
+            login_user = (2, 'dispatcher_user', 'Dispatcher')
+            today = datetime.date.today().isoformat()
+            cursor.execute("INSERT INTO leave_requests (employee_type, driver_id, leave_date, reason) VALUES ('Driver', 2, %s, 'Vacation')", (today,))
+            mysql.connection.commit()
+            target_url = url_for('mis_dashboard')
+            
+        elif flow_id == 7:
+            login_user = (3, 'manager_user', 'Fleet Manager')
+            target_url = url_for('fleet_dashboard')
+            
+        elif flow_id == 8:
+            login_user = (1, 'planner_user', 'Planner')
+            target_url = url_for('mis_dashboard')
+            
+        elif flow_id == 9:
+            login_user = (3, 'manager_user', 'Fleet Manager')
+            target_url = url_for('event_replay')
+            
+        elif flow_id == 10:
+            login_user = (3, 'manager_user', 'Fleet Manager')
+            cursor.execute("UPDATE containers SET discharge_datetime = DATE_SUB(NOW(), INTERVAL 5 DAY), lfd_datetime = DATE_SUB(NOW(), INTERVAL 3 DAY) WHERE container_number = 'REDU0000001'")
+            cursor.execute("INSERT INTO truck_allocations (container_number, driver_id, urgency_score, dispatch_status_code) VALUES ('REDU0000001', 1, 95, 'At Warehouse')")
+            cursor.execute("SELECT allocation_id FROM truck_allocations WHERE container_number = 'REDU0000001'")
+            alloc = cursor.fetchone()
+            cursor.execute("INSERT INTO dispatch_assignments (allocation_id, driver_id, outcome_code, outcome_at) VALUES (%s, 1, 'completed', NOW())", (alloc['allocation_id'],))
+            cursor.execute("SELECT assignment_id FROM dispatch_assignments WHERE allocation_id = %s", (alloc['allocation_id'],))
+            assign = cursor.fetchone()
+            cursor.execute("INSERT INTO delivery_completions (assignment_id, pod_note, pod_signature, confirmed_by_user_id) VALUES (%s, 'Delivered', 'data:image/png;base64,...', 3)", (assign['assignment_id'],))
+            mysql.connection.commit()
+            target_url = url_for('contract_negotiation_insights')
+            
+        response = make_response(jsonify({'status': 'success', 'redirect': target_url}))
+        
+        if login_user:
+            uid, name, role = login_user
+            token = generate_auto_login_token(uid, name, role)
+            response.set_cookie("access_token", token, httponly=True, samesite="Lax")
+            
+        if login_driver_id:
+            response.set_cookie("driver_id", str(login_driver_id), httponly=True, samesite="Lax", max_age=86400 * 7)
+        else:
+            response.delete_cookie("driver_id", path="/")
+            
+        return response
+        
+    except Exception as e:
+        mysql.connection.rollback()
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    finally:
+        cursor.close()
 
 # -------------------------------------------------------------
 # OPERATIONS MANAGEMENT ENDPOINTS (MIS DASHBOARD)
@@ -567,39 +587,9 @@ def logout():
 @requires_authenticated_session()
 def mis_dashboard():
     cursor = mysql.connection.cursor()
-    query = """
-        SELECT c.container_number, v.vessel_name,
-               DATE_FORMAT(c.lfd_datetime, '%Y-%m-%dT%H:%i:%s') as lfd_iso_string,
-               c.lfd_datetime,
-               IFNULL(t.dispatch_status_code, 'Pending') as current_dispatch_status,
-               t.accepted_at, t.picked_up_at, t.driver_id AS assigned_driver_id,
-               (psb.booking_id IS NOT NULL) AS port_slot_booked,
-               dl.latitude AS driver_lat, dl.longitude AS driver_lng, dl.speed_kph, d.driver_name,
-               CASE 
-                   WHEN t.dispatch_status_code = 'At Warehouse' THEN 'AT WAREHOUSE'
-                   WHEN t.dispatch_status_code = 'At Port' THEN 'AT PORT'
-                   WHEN t.dispatch_status_code = 'Dispatched' AND t.driver_id IS NULL THEN 'EMERGENCY'
-                   WHEN t.dispatch_status_code = 'Dispatched' AND t.accepted_at IS NULL THEN 'AWAITING'
-                   WHEN t.dispatch_status_code = 'Dispatched' AND t.picked_up_at IS NULL AND t.accepted_at IS NOT NULL AND psb.booking_id IS NULL THEN 'SLOT WAIT'
-                   WHEN t.dispatch_status_code = 'Dispatched' AND t.picked_up_at IS NULL THEN 'TO PORT'
-                   WHEN t.dispatch_status_code = 'Dispatched' THEN 'TO WAREHOUSE'
-                   WHEN TIMESTAMPDIFF(HOUR, NOW(), c.lfd_datetime) <= 12 THEN 'RED'
-                   WHEN TIMESTAMPDIFF(HOUR, NOW(), c.lfd_datetime) <= 24 THEN 'YELLOW'
-                   ELSE 'GREEN'
-               END as alert_status
-        FROM containers c
-        JOIN voyages vy ON vy.voyage_id = c.voyage_id
-        JOIN vessels v ON v.vessel_id = vy.vessel_id
-        LEFT JOIN truck_allocations t ON c.container_number = t.container_number
-        LEFT JOIN drivers d ON t.driver_id = d.driver_id
-        LEFT JOIN driver_locations dl ON dl.driver_id = d.driver_id
-        LEFT JOIN port_slot_bookings psb ON psb.allocation_id = t.allocation_id AND psb.released_at IS NULL
-        ORDER BY c.lfd_datetime ASC
-    """
-    cursor.execute(query)
-    containers = enrich_containers_with_eta(cursor.fetchall())
+    containers = enrich_containers_with_eta(fetch_containers_dashboard(cursor))
     fleet = get_fleet_status(cursor)
-    savings = compute_fleet_savings(cursor) if g.current_user_role == 'Fleet Manager' else None
+    savings = fetch_fleet_savings(cursor, EMERGENCY_DRIVER_FLAT_RATE, STORE_RENT_HOURLY_RATE, DEMURRAGE_HOURLY_RATE, GRACE_PERIOD_HOURS) if g.current_user_role == 'Fleet Manager' else None
     inbound_vessels = fetch_inbound_vessels(cursor)
     from services.notifications import check_escalation_alerts
     from services.port_slots import get_slot_status
@@ -629,8 +619,7 @@ def check_availability():
         cursor.close()
         return jsonify({"status": "available", "count": fleet['dispatchable']})
         
-    cursor.execute("SELECT lfd_datetime, discharge_datetime FROM containers WHERE container_number = %s", (container_num,))
-    container = cursor.fetchone()
+    container = fetch_container_by_number(cursor, container_num)
     
     if not container:
         cursor.close()
@@ -650,21 +639,12 @@ def allocate_truck():
     cursor = mysql.connection.cursor()
     try:
         driver_id, driver_name, phone_tail = pick_nearest_dispatchable_driver(
-            cursor, MAP_PORT['lat'], MAP_PORT['lng'],
+            cursor, MAP_PORT['lat'], MAP_PORT['lng'], MAP_DEPOT['lat'], MAP_DEPOT['lng']
         )
         if not driver_id:
             return jsonify({"status": "depleted", "message": "No on-shift drivers available. Use emergency dispatch."}), 409
         
-        cursor.execute("""
-            INSERT INTO truck_allocations (container_number, driver_id, urgency_score, dispatch_status_code, accepted_at)
-            VALUES (%s, %s, 95, 'Dispatched', NULL)
-            ON DUPLICATE KEY UPDATE driver_id = %s, dispatch_status_code = 'Dispatched', accepted_at = NULL
-        """, (container_num, driver_id, driver_id))
-        cursor.execute(
-            "SELECT allocation_id FROM truck_allocations WHERE container_number = %s",
-            (container_num,),
-        )
-        allocation = cursor.fetchone()
+        allocation = allocate_vessel_container(cursor, container_num, driver_id)
         if allocation:
             record_dispatch_assignment(cursor, allocation['allocation_id'], driver_id)
 
@@ -735,41 +715,18 @@ def expunge_container():
     pod_signature = data.get('pod_signature', '')
     cursor = mysql.connection.cursor()
     try:
-        cursor.execute(
-            "SELECT allocation_id, driver_id FROM truck_allocations WHERE container_number = %s",
-            (container_num,),
-        )
-        allocation = cursor.fetchone()
+        allocation = fetch_allocation_by_container(cursor, container_num)
         assignment_id = None
         driver_id = allocation['driver_id'] if allocation else None
         if driver_id:
-            cursor.execute("UPDATE drivers SET status_code = 'Available' WHERE driver_id = %s", (driver_id,))
+            update_driver_status(cursor, driver_id, 'Available')
         if allocation:
             assignment_id = find_accepted_assignment(
                 cursor, allocation['allocation_id'], driver_id,
             )
             if assignment_id:
-                cursor.execute(
-                    """
-                    INSERT INTO delivery_completions
-                        (assignment_id, pod_note, pod_signature, confirmed_by_user_id)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (
-                        assignment_id,
-                        pod_note,
-                        pod_signature[:500] if pod_signature else '',
-                        g.current_user_id,
-                    ),
-                )
-                cursor.execute(
-                    """
-                    UPDATE dispatch_assignments
-                    SET outcome_code = 'completed', outcome_at = NOW()
-                    WHERE assignment_id = %s
-                    """,
-                    (assignment_id,),
-                )
+                insert_delivery_completion(cursor, assignment_id, pod_note, pod_signature, g.current_user_id)
+                update_assignment_completed(cursor, assignment_id)
             from services.port_slots import release_slots_for_allocation
             release_slots_for_allocation(cursor, allocation['allocation_id'])
         log_event(cursor, container_num, 'POD_SYSTEM', 'DELIVERY_COMPLETED', {
@@ -778,8 +735,8 @@ def expunge_container():
             'completed_by': g.current_user_username,
             'assignment_id': assignment_id if allocation else None,
         })
-        cursor.execute("DELETE FROM truck_allocations WHERE container_number = %s", (container_num,))
-        cursor.execute("DELETE FROM containers WHERE container_number = %s", (container_num,))
+        delete_allocation(cursor, container_num)
+        delete_container(cursor, container_num)
         
         mysql.connection.commit()
         return jsonify({"status": "success"})
@@ -796,11 +753,7 @@ def expunge_container():
 @requires_authenticated_session()
 def drivers_dashboard():
     cursor = mysql.connection.cursor()
-    cursor.execute(
-        "SELECT * FROM v_drivers_live WHERE driver_name != %s ORDER BY current_status, driver_name",
-        (EMERGENCY_CONTRACTOR_NAME,),
-    )
-    drivers = cursor.fetchall()
+    drivers = fetch_drivers_for_roster(cursor)
     schedule_map = fetch_driver_schedules(cursor)
     drivers = enrich_drivers_with_schedules(drivers, schedule_map, cursor)
     cursor.close()
@@ -810,8 +763,7 @@ def drivers_dashboard():
 @requires_role('Fleet Manager')
 def fleet_dashboard():
     cursor = mysql.connection.cursor()
-    cursor.execute("SELECT * FROM v_drivers_live ORDER BY driver_name")
-    drivers = cursor.fetchall()
+    drivers = fetch_all_drivers_live(cursor)
     schedule_map = fetch_driver_schedules(cursor)
     drivers = enrich_drivers_with_schedules(drivers, schedule_map, cursor)
     cursor.close()
@@ -825,14 +777,7 @@ def add_driver():
     phone = request.form['phone_number']
     cursor = mysql.connection.cursor()
     try:
-        cursor.execute("INSERT INTO drivers (driver_name, phone_number, status_code) VALUES (%s, %s, 'Available')", (name, phone))
-        driver_id = cursor.lastrowid
-        upsert_driver_location(cursor, driver_id, MAP_DEPOT['lat'], MAP_DEPOT['lng'])
-        for day in range(7):
-            cursor.execute(
-                "INSERT INTO driver_schedules (driver_id, day_of_week, shift_start, shift_end) VALUES (%s, %s, %s, %s)",
-                (driver_id, day, '06:00:00', '18:00:00'),
-            )
+        db_add_driver(cursor, name, phone, MAP_DEPOT['lat'], MAP_DEPOT['lng'])
         mysql.connection.commit()
         flash(f"Driver {name} integrated successfully into asset hub database.", "success")
     except Exception:
@@ -849,7 +794,7 @@ def update_driver(driver_id):
     status = request.form['current_status']
     cursor = mysql.connection.cursor()
     try:
-        cursor.execute("UPDATE drivers SET phone_number = %s, status_code = %s WHERE driver_id = %s", (phone, status, driver_id))
+        db_update_driver(cursor, driver_id, phone, status)
         mysql.connection.commit()
         flash("Driver parameters amended successfully.", "success")
     except Exception:
@@ -864,7 +809,7 @@ def update_driver(driver_id):
 def remove_driver(driver_id):
     cursor = mysql.connection.cursor()
     try:
-        cursor.execute("DELETE FROM drivers WHERE driver_id = %s", (driver_id,))
+        db_remove_driver(cursor, driver_id)
         mysql.connection.commit()
         flash("Logistics operator asset decommissioned.", "info")
     except Exception:
@@ -879,15 +824,14 @@ def remove_driver(driver_id):
 def update_driver_schedule(driver_id):
     cursor = mysql.connection.cursor()
     try:
-        cursor.execute("DELETE FROM driver_schedules WHERE driver_id = %s", (driver_id,))
+        schedule_days = []
         for day in range(7):
-            if request.form.get(f'day_{day}_enabled') == 'on':
-                start = request.form.get(f'day_{day}_start', '08:00')
-                end = request.form.get(f'day_{day}_end', '17:00')
-                cursor.execute(
-                    "INSERT INTO driver_schedules (driver_id, day_of_week, shift_start, shift_end) VALUES (%s, %s, %s, %s)",
-                    (driver_id, day, start, end),
-                )
+            is_enabled = request.form.get(f'day_{day}_enabled') == 'on'
+            start = request.form.get(f'day_{day}_start', '08:00')
+            end = request.form.get(f'day_{day}_end', '17:00')
+            schedule_days.append((day, is_enabled, start, end))
+            
+        db_update_driver_schedule(cursor, driver_id, schedule_days)
         mysql.connection.commit()
         flash("Driver work schedule updated.", "success")
     except Exception:
@@ -930,22 +874,8 @@ def live_tracking():
 def telemetry_live():
     tick_result = _maybe_advance_simulation()
     cursor = mysql.connection.cursor()
-    cursor.execute("""
-        SELECT driver_id, driver_name, current_status, latitude, longitude,
-               heading, speed_kph, DATE_FORMAT(last_gps_update, '%Y-%m-%dT%H:%i:%s') AS last_gps_update
-        FROM v_drivers_live
-        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-          AND driver_name != %s
-    """, (EMERGENCY_CONTRACTOR_NAME,))
-    drivers = cursor.fetchall()
-    cursor.execute("""
-        SELECT voyage_id AS vessel_id, vessel_name, voyage_number, latitude, longitude, heading,
-               speed_knots, tracking_status,
-               DATE_FORMAT(eta_datetime, '%Y-%m-%dT%H:%i:%s') AS eta_iso
-        FROM v_vessels_live
-        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-    """)
-    vessels = cursor.fetchall()
+    drivers = fetch_live_drivers_telemetry(cursor)
+    vessels = fetch_vessel_telemetry_live(cursor)
     cursor.close()
     return jsonify({
         'drivers': drivers,
@@ -971,8 +901,7 @@ def simulation_tick_manual():
 @requires_authenticated_session()
 def event_replay():
     cursor = mysql.connection.cursor()
-    cursor.execute("SELECT DISTINCT container_number FROM events WHERE container_number IS NOT NULL ORDER BY container_number")
-    container_ids = [r['container_number'] for r in cursor.fetchall()]
+    container_ids = fetch_distinct_event_containers(cursor)
     cursor.close()
     return render_template('replay.html', container_ids=container_ids,
                            username=g.current_user_username, role=g.current_user_role)
@@ -982,17 +911,7 @@ def event_replay():
 def replay_events_api():
     container_filter = request.args.get('container')
     cursor = mysql.connection.cursor()
-    if container_filter:
-        cursor.execute("""
-            SELECT event_id, container_number, source_api, event_type, event_timestamp, raw_payload
-            FROM events WHERE container_number = %s ORDER BY event_timestamp ASC, event_id ASC
-        """, (container_filter,))
-    else:
-        cursor.execute("""
-            SELECT event_id, container_number, source_api, event_type, event_timestamp, raw_payload
-            FROM events ORDER BY event_timestamp DESC, event_id DESC LIMIT 100
-        """)
-    events = cursor.fetchall()
+    events = fetch_events_for_replay(cursor, container_filter)
     for ev in events:
         ts = ev.get('event_timestamp')
         if ts and hasattr(ts, 'isoformat'):
@@ -1005,23 +924,14 @@ def replay_events_api():
 # -------------------------------------------------------------
 @app.route('/driver')
 def driver_login_page():
-    cursor = mysql.connection.cursor()
-    cursor.execute(
-        "SELECT driver_id, driver_name, phone_number, current_status FROM v_drivers_live "
-        "WHERE driver_name != %s ORDER BY driver_name",
-        (EMERGENCY_CONTRACTOR_NAME,),
-    )
-    drivers = cursor.fetchall()
-    cursor.close()
-    return render_template('driver_login.html', drivers=drivers)
+    return redirect(url_for('login', tab='driver'))
 
 @app.route('/driver/login', methods=['POST'])
 def driver_login():
     driver_id = request.form.get('driver_id')
     phone_tail = request.form.get('phone_tail', '').strip()
     cursor = mysql.connection.cursor()
-    cursor.execute("SELECT * FROM v_drivers_live WHERE driver_id = %s", (driver_id,))
-    driver = cursor.fetchone()
+    driver = fetch_driver_by_id(cursor, driver_id)
     cursor.close()
     if (
         not driver
@@ -1029,7 +939,7 @@ def driver_login():
         or not driver['phone_number'].replace(' ', '').endswith(phone_tail)
     ):
         flash('Invalid driver or phone verification.', 'danger')
-        return redirect(url_for('driver_login_page'))
+        return redirect(url_for('login', tab='driver'))
     response = make_response(redirect(url_for('driver_portal')))
     response.set_cookie('driver_id', str(driver_id), httponly=True, samesite='Lax', max_age=86400 * 7)
     return response
@@ -1038,23 +948,9 @@ def driver_login():
 def driver_portal():
     driver = get_driver_from_cookie()
     if not driver:
-        return redirect(url_for('driver_login_page'))
+        return redirect(url_for('login', tab='driver'))
     cursor = mysql.connection.cursor()
-    cursor.execute("""
-        SELECT t.*, c.lfd_datetime, c.container_number, v.vessel_name,
-               t.dispatch_status_code AS dispatch_status,
-               (t.dispatch_status_code = 'At Warehouse') AS at_warehouse,
-               psb.slot_number AS port_slot_number, psb.booked_at AS port_slot_booked_at,
-               t.picked_up_at
-        FROM truck_allocations t
-        JOIN containers c ON c.container_number = t.container_number
-        JOIN voyages vy ON vy.voyage_id = c.voyage_id
-        JOIN vessels v ON v.vessel_id = vy.vessel_id
-        LEFT JOIN port_slot_bookings psb ON psb.allocation_id = t.allocation_id AND psb.released_at IS NULL
-        WHERE t.driver_id = %s AND t.dispatch_status_code IN ('Dispatched', 'At Warehouse')
-        ORDER BY t.allocated_at DESC LIMIT 1
-    """, (driver['driver_id'],))
-    active_job = cursor.fetchone()
+    active_job = fetch_driver_active_job(cursor, driver['driver_id'])
     from services.port_slots import get_slot_status
     port_slots = get_slot_status(cursor)
     cursor.close()
@@ -1064,7 +960,7 @@ def driver_portal():
 
 @app.route('/driver/logout')
 def driver_logout():
-    response = make_response(redirect(url_for('driver_login_page')))
+    response = make_response(redirect(url_for('login', tab='driver')))
     response.delete_cookie('driver_id', path='/')
     return response
 
@@ -1097,27 +993,10 @@ def driver_reject_job():
         )
         if not assignment_id:
             return jsonify({'status': 'error', 'message': 'No pending assignment record found'}), 404
-        cursor.execute(
-            "INSERT INTO job_rejections (assignment_id, reason) VALUES (%s, %s)",
-            (assignment_id, reason[:500]),
-        )
-        cursor.execute(
-            """
-            UPDATE dispatch_assignments
-            SET outcome_code = 'rejected', outcome_at = NOW()
-            WHERE assignment_id = %s
-            """,
-            (assignment_id,),
-        )
-        cursor.execute("""
-            UPDATE truck_allocations
-            SET driver_id = NULL, dispatch_status_code = 'Pending', accepted_at = NULL
-            WHERE allocation_id = %s
-        """, (allocation['allocation_id'],))
-        cursor.execute(
-            "UPDATE drivers SET status_code = 'Available' WHERE driver_id = %s",
-            (driver['driver_id'],),
-        )
+        insert_job_rejection(cursor, assignment_id, reason)
+        update_assignment_rejected(cursor, assignment_id)
+        reset_allocation_after_rejection(cursor, allocation['allocation_id'])
+        update_driver_status(cursor, driver['driver_id'], 'Available')
         log_event(cursor, container_num, 'DRIVER_APP', 'JOB_REJECTED', {
             'assignment_id': assignment_id,
             'reason': reason[:500],
@@ -1151,22 +1030,9 @@ def driver_accept_job():
         )
         if not assignment_id:
             return jsonify({'status': 'error', 'message': 'No pending assignment record found'}), 404
-        cursor.execute(
-            "UPDATE truck_allocations SET accepted_at = NOW() WHERE allocation_id = %s",
-            (allocation['allocation_id'],),
-        )
-        cursor.execute(
-            """
-            UPDATE dispatch_assignments
-            SET outcome_code = 'accepted', outcome_at = NOW()
-            WHERE assignment_id = %s
-            """,
-            (assignment_id,),
-        )
-        cursor.execute(
-            "UPDATE drivers SET status_code = 'On Delivery' WHERE driver_id = %s",
-            (driver['driver_id'],),
-        )
+        accept_job_allocation(cursor, allocation['allocation_id'])
+        update_assignment_accepted(cursor, assignment_id)
+        update_driver_status(cursor, driver['driver_id'], 'On Delivery')
         log_event(cursor, container_num, 'DRIVER_APP', 'JOB_ACCEPTED', {'assignment_id': assignment_id})
         mysql.connection.commit()
         return jsonify({'status': 'success'})
@@ -1190,13 +1056,7 @@ def driver_check_port_slot():
     cursor = mysql.connection.cursor()
     from services.port_slots import get_slot_status, allocation_has_active_slot
     slot_status = get_slot_status(cursor)
-    cursor.execute("""
-        SELECT t.allocation_id, t.accepted_at, t.container_number
-        FROM truck_allocations t
-        WHERE t.driver_id = %s AND t.dispatch_status_code = 'Dispatched'
-        ORDER BY t.allocated_at DESC LIMIT 1
-    """, (driver['driver_id'],))
-    job = cursor.fetchone()
+    job = fetch_active_job_for_slot(cursor, driver['driver_id'])
     if not job:
         cursor.close()
         return jsonify({'status': 'error', 'message': 'No active dispatch'}), 404
@@ -1223,13 +1083,7 @@ def driver_book_port_slot():
         return jsonify({'status': 'error', 'message': 'Not authenticated'}), 401
     cursor = mysql.connection.cursor()
     try:
-        cursor.execute("""
-            SELECT t.allocation_id, t.container_number, t.accepted_at
-            FROM truck_allocations t
-            WHERE t.driver_id = %s AND t.dispatch_status_code = 'Dispatched'
-            ORDER BY t.allocated_at DESC LIMIT 1
-        """, (driver['driver_id'],))
-        job = cursor.fetchone()
+        job = fetch_active_job_for_slot(cursor, driver['driver_id'])
         if not job:
             return jsonify({'status': 'error', 'message': 'No active dispatch'}), 404
         if not job['accepted_at']:
@@ -1302,37 +1156,7 @@ def lfd_traffic_light(lfd_datetime, as_of=None):
 def container_etas_api():
     _maybe_advance_simulation()
     cursor = mysql.connection.cursor()
-    cursor.execute("""
-        SELECT c.container_number, c.lfd_datetime,
-               IFNULL(t.dispatch_status_code, 'Pending') AS dispatch_status,
-               t.accepted_at, t.picked_up_at, t.driver_id,
-               d.driver_name,
-               dl.latitude AS driver_lat, dl.longitude AS driver_lng, dl.speed_kph,
-               (t.dispatch_status_code = 'At Warehouse') AS at_warehouse,
-               psb.slot_number AS port_slot_number,
-               rej.driver_name AS rejected_by,
-               rej.reason AS rejection_reason
-        FROM containers c
-        LEFT JOIN truck_allocations t ON t.container_number = c.container_number
-        LEFT JOIN drivers d ON t.driver_id = d.driver_id
-        LEFT JOIN driver_locations dl ON dl.driver_id = d.driver_id
-        LEFT JOIN port_slot_bookings psb ON psb.allocation_id = t.allocation_id AND psb.released_at IS NULL
-        LEFT JOIN (
-            SELECT t2.container_number, d2.driver_name, jr.reason
-            FROM job_rejections jr
-            JOIN dispatch_assignments da ON da.assignment_id = jr.assignment_id
-            JOIN drivers d2 ON d2.driver_id = da.driver_id
-            JOIN truck_allocations t2 ON t2.allocation_id = da.allocation_id
-            JOIN (
-                SELECT da3.allocation_id, MAX(jr3.rejected_at) AS latest_rejected_at
-                FROM job_rejections jr3
-                JOIN dispatch_assignments da3 ON da3.assignment_id = jr3.assignment_id
-                GROUP BY da3.allocation_id
-            ) latest ON latest.allocation_id = da.allocation_id AND latest.latest_rejected_at = jr.rejected_at
-        ) rej ON rej.container_number = c.container_number
-            AND IFNULL(t.dispatch_status_code, 'Pending') = 'Pending'
-    """)
-    rows = cursor.fetchall()
+    rows = fetch_all_containers_etas(cursor)
     fleet = get_fleet_status(cursor)
     cursor.close()
     result = {}
@@ -1401,59 +1225,45 @@ def container_etas_api():
 @requires_role('Fleet Manager')
 def analytics_export():
     from services.report_export import build_analytics_csv_zip
+    from flask import send_file
     cursor = mysql.connection.cursor()
     try:
         buffer = build_analytics_csv_zip(cursor)
     finally:
         cursor.close()
+    
+    # Save a fail-safe copy to the workspace root directory
+    try:
+        workspace_zip = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fleet_analytics.zip')
+        with open(workspace_zip, 'wb') as f:
+            f.write(buffer.getvalue())
+    except Exception as e:
+        print(f"[*] Fail-safe local ZIP write failed: {e}")
+
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M')
     filename = f'fleet_analytics_{stamp}.zip'
-    response = make_response(buffer.getvalue())
-    response.headers['Content-Type'] = 'application/zip'
-    response.headers['Content-Disposition'] = f'attachment; filename={filename}'
-    return response
+    return send_file(
+        buffer,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name=filename
+    )
 
 @app.route('/analytics')
 @requires_role('Fleet Manager')
 def contract_negotiation_insights():
     cursor = mysql.connection.cursor()
-    
-    # REFACTORED QUERY: Dynamically calculates actual accrued delay risk exposure 
-    # for all containers linked to a vessel, active or historical.
-    query = f"""
-        SELECT v.vessel_name, 
-               COUNT(c.container_number) AS total_dispatches,
-               COUNT(CASE WHEN t.dispatch_status_code = 'Dispatched' AND t.driver_id IS NULL THEN 1 END) AS emergency_hires,
-               SUM(CASE WHEN t.dispatch_status_code = 'Dispatched' AND t.driver_id IS NULL THEN {EMERGENCY_DRIVER_FLAT_RATE} ELSE 0.00 END) AS total_extra_costs,
-               ROUND(SUM(
-                   CASE 
-                       WHEN TIMESTAMPDIFF(SECOND, c.lfd_datetime, NOW()) > 0 
-                       THEN (TIMESTAMPDIFF(SECOND, c.lfd_datetime, NOW()) / 3600.0) * {STORE_RENT_HOURLY_RATE}
-                       ELSE 0.00 
-                   END
-               ), 2) AS accumulated_store_rent,
-               ROUND(SUM(
-                   CASE 
-                       WHEN TIMESTAMPDIFF(SECOND, DATE_ADD(c.discharge_datetime, INTERVAL {GRACE_PERIOD_HOURS} HOUR), NOW()) > 0 
-                       THEN (TIMESTAMPDIFF(SECOND, DATE_ADD(c.discharge_datetime, INTERVAL {GRACE_PERIOD_HOURS} HOUR), NOW()) / 3600.0) * {DEMURRAGE_HOURLY_RATE}
-                       ELSE 0.00 
-                   END
-               ), 2) AS accumulated_demurrage
-        FROM vessels v
-        JOIN voyages vy ON vy.vessel_id = v.vessel_id
-        LEFT JOIN containers c ON c.voyage_id = vy.voyage_id
-        LEFT JOIN truck_allocations t ON c.container_number = t.container_number
-        GROUP BY v.vessel_name 
-        ORDER BY total_extra_costs DESC, accumulated_store_rent DESC, accumulated_demurrage DESC
-    """
-    cursor.execute(query)
-    carrier_benchmarks = cursor.fetchall()
+    carrier_benchmarks = fetch_carrier_benchmarks(
+        cursor, EMERGENCY_DRIVER_FLAT_RATE, STORE_RENT_HOURLY_RATE, DEMURRAGE_HOURLY_RATE, GRACE_PERIOD_HOURS
+    )
     
     total_leakage = sum(float(item['total_extra_costs'] or 0.0) for item in carrier_benchmarks)
     total_store_rent = sum(float(item['accumulated_store_rent'] or 0.0) for item in carrier_benchmarks)
     total_demurrage = sum(float(item['accumulated_demurrage'] or 0.0) for item in carrier_benchmarks)
     total_fines = round(total_store_rent + total_demurrage, 2)
-    savings = compute_fleet_savings(cursor)
+    savings = fetch_fleet_savings(
+        cursor, EMERGENCY_DRIVER_FLAT_RATE, STORE_RENT_HOURLY_RATE, DEMURRAGE_HOURLY_RATE, GRACE_PERIOD_HOURS
+    )
     
     cursor.close()
     

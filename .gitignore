@@ -11,3 +11,11 @@ simulation/__pycache__/__init__.cpython-314.pyc
 simulation/__pycache__/engine.cpython-314.pyc
 __pycache__/app.cpython-314.pyc
 __pycache__/config.cpython-314.pyc
+fleet_analytics.zip
+__pycache__/*
+services/__pycache__/*
+simulation/__pycache__/*
+templates/__pycache__/*
+db/__pycache__/setup.cpython-314.pyc
+__pycache__/app.cpython-314.pyc
+__pycache__/config.cpython-314.pyc

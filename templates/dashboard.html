@@ -320,6 +320,8 @@
             <a href="/drivers">Drivers</a>
             <a href="/tracking">Live Map</a>
             <a href="/replay">Event Replay</a>
+            <a href="/leave">Leave Management</a>
+            <a href="/walkthroughs" style="color: #0284c7; font-weight: bold;">Lecturer Walkthroughs</a>
             <a href="/driver" target="_blank">Driver App</a>
             {% if role == 'Fleet Manager' %}
                 <a href="/fleet">Manage Fleet</a>
@@ -544,7 +546,7 @@ function updateRollingTimers() {
         timer.innerText = `${hours}h ${minutes}m ${seconds}s`;
 
         // Real-time Traffic Light Threshold Logic Mapping
-        if (badge) {
+        if (badge && ["RED", "YELLOW", "GREEN"].includes(badge.innerText.trim())) {
             if (hours < 12) {
                 badge.className = "badge status-RED";
                 badge.innerText = "RED";

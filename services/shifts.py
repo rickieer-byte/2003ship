@@ -22,6 +22,16 @@ def time_in_shift(current_time, shift_start, shift_end):
 def driver_is_on_shift(driver_id, cursor, as_of=None):
     """True when the driver is within a scheduled 12-hour block (incl. overnight spillover)."""
     as_of = as_of or datetime.datetime.now()
+    as_of_date = as_of.date()
+    
+    # Exclude driver if they have an active leave request today
+    cursor.execute(
+        "SELECT 1 FROM leave_requests WHERE employee_type = 'Driver' AND driver_id = %s AND leave_date = %s",
+        (driver_id, as_of_date),
+    )
+    if cursor.fetchone():
+        return False
+
     current_time = as_of.time()
     dow = as_of.weekday()
 

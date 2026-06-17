@@ -174,7 +174,7 @@ def fetch_employee_metrics_sheet(cursor):
 def build_analytics_csv_zip(cursor):
     """Return a ZIP archive containing jobs, carrier performance, and employee metrics CSVs."""
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_STORED) as archive:
         for filename, fetcher in (
             ('jobs.csv', fetch_jobs_sheet),
             ('carrier_performance.csv', fetch_carrier_performance_sheet),

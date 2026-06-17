@@ -16,6 +16,9 @@ import http.cookiejar
 
 
 
+import pymysql
+pymysql.install_as_MySQLdb()
+
 import MySQLdb
 
 import MySQLdb.cursors
@@ -56,7 +59,7 @@ def db():
 
         user=os.getenv('DB_USER', 'root'),
 
-        passwd=os.getenv('DB_PASSWORD', ''),
+        password=os.getenv('DB_PASSWORD', ''),
 
         db=os.getenv('DB_NAME', 'escalation_db'),
 

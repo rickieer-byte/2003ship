@@ -8,6 +8,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import pymysql
+pymysql.install_as_MySQLdb()
+
 import MySQLdb
 from dotenv import load_dotenv
 from services.locations import upsert_driver_location
@@ -17,7 +20,7 @@ load_dotenv()
 DB_CONFIG = {
     'host': os.getenv('DB_HOST', 'localhost'),
     'user': os.getenv('DB_USER', 'root'),
-    'passwd': os.getenv('DB_PASSWORD', ''),
+    'password': os.getenv('DB_PASSWORD', ''),
     'db': os.getenv('DB_NAME', 'escalation_db'),
     'cursorclass': MySQLdb.cursors.DictCursor,
 }

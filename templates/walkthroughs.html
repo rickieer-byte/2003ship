@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lecturer Task Walkthrough Center - Last Mile Logistics</title>
+    <style>
+        :root {
+            --primary: #1e3a8a;
+            --primary-dark: #0f172a;
+            --bg-main: #f1f5f9;
+            --surface: #ffffff;
+            --text-dark: #334155;
+            --border: #cbd5e1;
+            
+            --color-blue: #0284c7;
+            --color-green: #10b981;
+            --color-orange: #f97316;
+            --color-red: #ef4444;
+            --color-purple: #8b5cf6;
+        }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-main);
+            color: var(--text-dark);
+            margin: 0;
+            padding: 30px;
+        }
+        .container { max-width: 1100px; margin: 0 auto; }
+        header {
+            background: linear-gradient(135deg, var(--primary-dark), #1e293b);
+            color: white;
+            padding: 30px 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        h1 { margin: 0; font-size: 28px; letter-spacing: -0.5px; }
+        .subtitle { font-size: 14px; opacity: 0.8; margin-top: 5px; display: block; }
+        .nav-links a {
+            color: white;
+            text-decoration: none;
+            font-weight: bold;
+            margin-left: 20px;
+            border-bottom: 2px solid transparent;
+            padding-bottom: 4px;
+            transition: all 0.2s;
+        }
+        .nav-links a:hover { border-bottom-color: white; }
+        
+        .grid {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+        .flow-card {
+            background: var(--surface);
+            border-radius: 10px;
+            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);
+            border-left: 6px solid var(--color-blue);
+            display: grid;
+            grid-template-columns: 3fr 1fr;
+            padding: 25px;
+            gap: 20px;
+            align-items: center;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .flow-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0,0,0,0.08);
+        }
+        .flow-id {
+            background: #e0f2fe;
+            color: #0369a1;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            display: inline-block;
+            margin-bottom: 8px;
+        }
+        .flow-title {
+            font-size: 18px;
+            color: var(--primary-dark);
+            margin: 0 0 10px 0;
+            font-weight: 700;
+        }
+        .flow-description {
+            font-size: 14px;
+            color: #475569;
+            line-height: 1.5;
+            margin-bottom: 15px;
+        }
+        
+        .steps {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 12px 18px;
+            font-size: 13px;
+        }
+        .steps strong { color: var(--primary); }
+        .steps ol { margin: 6px 0 0 0; padding-left: 20px; }
+        .steps li { margin-bottom: 4px; }
+        
+        .setup-column {
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            border-left: 1px solid #e2e8f0;
+            padding-left: 20px;
+        }
+        .btn-setup {
+            background: linear-gradient(135deg, var(--color-blue), #0284c7);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 13px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(2,132,199,0.2);
+            transition: all 0.2s;
+            width: 100%;
+            max-width: 180px;
+        }
+        .btn-setup:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 12px rgba(2,132,199,0.3);
+            background: #0284c7;
+        }
+        .btn-setup:active {
+            transform: translateY(1px);
+        }
+        
+        /* Different card accent colors for variety */
+        .color-1 { border-left-color: var(--color-blue); }
+        .color-2 { border-left-color: var(--color-green); }
+        .color-3 { border-left-color: var(--color-orange); }
+        .color-4 { border-left-color: var(--color-red); }
+        .color-5 { border-left-color: var(--color-purple); }
+        .color-6 { border-left-color: #06b6d4; }
+        .color-7 { border-left-color: #ec4899; }
+        .color-8 { border-left-color: #10b981; }
+        .color-9 { border-left-color: #f59e0b; }
+        .color-10 { border-left-color: #6366f1; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <header>
+        <div>
+            <h1>Walkthrough Center</h1>
+            <span class="subtitle">10 Interactive Task Flows for Evaluation and Grading</span>
+        </div>
+        <div class="nav-links">
+            <a href="/">← Operations Hub</a>
+            <a href="/leave">Leave Management</a>
+        </div>
+    </header>
+
+    <div class="grid">
+        <!-- Flow 1 -->
+        <div class="flow-card color-1">
+            <div>
+                <span class="flow-id">Flow 1</span>
+                <h3 class="flow-title">Standard End-to-End Container Delivery Pipeline</h3>
+                <p class="flow-description">
+                    Demonstrates the core operational workflow: dispatching an arrived container, driver portal authentication, prime mover slot allocation at the port gate, geofenced port pickup, geofenced warehouse arrival, and POD signing.
+                </p>
+                <div class="steps">
+                    <strong>Step-by-Step Instructions:</strong>
+                    <ol>
+                        <li>Click the Setup button to log in as <strong>dispatcher_user</strong>.</li>
+                        <li>On the dashboard, click <strong>Instant Allocate</strong> next to container <strong>NYKU9012455</strong>. Notice it assigns driver <strong>Siti Aisha</strong>.</li>
+                        <li>Open the <strong>Driver App</strong> (link in nav) in a private window or another tab, log in as Siti Aisha (phone tail 5432).</li>
+                        <li>Accept the job, and click <strong>Book Gate Slot</strong>. Notice it books port slot #1.</li>
+                        <li>Simulate geofence updates on the tracking map or let the simulation ticks complete.</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="setup-column">
+                <button class="btn-setup" onclick="triggerSetup(1)">Auto-Setup Flow 1</button>
+            </div>
+        </div>
+
+        <!-- Flow 2 -->
+        <div class="flow-card color-2">
+            <div>
+                <span class="flow-id">Flow 2</span>
+                <h3 class="flow-title">Driver Job Rejection &amp; Re-allocation Cooldown</h3>
+                <p class="flow-description">
+                    Verifies driver autonomy and the system's re-allocation rules. A driver rejects an assigned job, triggering a cooldown blackout period and resetting the container to Pending.
+                </p>
+                <div class="steps">
+                    <strong>Step-by-Step Instructions:</strong>
+                    <ol>
+                        <li>Click Setup to auto-assign a container to driver <strong>Mubarak Ali</strong> and log you into the driver portal.</li>
+                        <li>On the portal, click <strong>Decline Job</strong>, enter a rejection reason (e.g., "Engine issues"), and submit.</li>
+                        <li>Go back to the Operations Hub. Observe that the container has reset to <strong>Pending</strong>, displaying a warning note: "Mubarak Ali declined (Engine issues)".</li>
+                        <li>Click <strong>Instant Allocate</strong> again. Mubarak Ali is in cooldown, so the algorithm bypasses him and selects the next nearest available driver.</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="setup-column">
+                <button class="btn-setup" onclick="triggerSetup(2)">Auto-Setup Flow 2</button>
+            </div>
+        </div>
+
+        <!-- Flow 3 -->
+        <div class="flow-card color-3">
+            <div>
+                <span class="flow-id">Flow 3</span>
+                <h3 class="flow-title">DSS Warnings for Exhausted Fleet Resources</h3>
+                <p class="flow-description">
+                    Demonstrates the Decision Support System (DSS) alert modal. When no internal fleet drivers are on shift or available, the system computes projected storage and demurrage charges to guide the user on emergency hires.
+                </p>
+                <div class="steps">
+                    <strong>Step-by-Step Instructions:</strong>
+                    <ol>
+                        <li>Click Setup to set all internal drivers to Offline and log you in as a Dispatcher.</li>
+                        <li>Click <strong>Instant Allocate</strong> next to container <strong>NYKU9012455</strong>.</li>
+                        <li>Observe the DSS modal presenting the port charges projection, emergency hire comparison, and a recommended strategic action (PROCEED or Defer).</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="setup-column">
+                <button class="btn-setup" onclick="triggerSetup(3)">Auto-Setup Flow 3</button>
+            </div>
+        </div>
+
+        <!-- Flow 4 -->
+        <div class="flow-card color-4">
+            <div>
+                <span class="flow-id">Flow 4</span>
+                <h3 class="flow-title">Staff Leave Application (Within Limits)</h3>
+                <p class="flow-description">
+                    Registers a standard staff leave request for a driver, dispatcher, or planner. The system validates the request against active schedules and approved leave dates.
+                </p>
+                <div class="steps">
+                    <strong>Step-by-Step Instructions:</strong>
+                    <ol>
+                        <li>Click Setup to navigate directly to the Leave Management panel as Fleet Manager.</li>
+                        <li>Select employee type <strong>Driver</strong> and select driver <strong>Sarah Tan</strong>.</li>
+                        <li>Choose a future date (e.g., tomorrow) and click <strong>Submit Request</strong>.</li>
+                        <li>Notice that the leave request is successfully recorded in the table list.</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="setup-column">
+                <button class="btn-setup" onclick="triggerSetup(4)">Auto-Setup Flow 4</button>
+            </div>
+        </div>
+
+        <!-- Flow 5 -->
+        <div class="flow-card color-5">
+            <div>
+                <span class="flow-id">Flow 5</span>
+                <h3 class="flow-title">SQL Trigger-based Leave Constraint Validation</h3>
+                <p class="flow-description">
+                    Tests the strict corporate limit of maximum 2 people per employee type on leave on any single day. This validation is enforced at the database level by SQL Triggers before record insertion.
+                </p>
+                <div class="steps">
+                    <strong>Step-by-Step Instructions:</strong>
+                    <ol>
+                        <li>Click Setup. This pre-seeds 2 driver leave requests for tomorrow and logs you in as Fleet Manager.</li>
+                        <li>Try to submit a new leave request for a <strong>third driver</strong> (e.g. Marcus Chen) on the exact same date (tomorrow).</li>
+                        <li>Observe the database-level error caught and returned in a flash message: "Leave limit reached: A maximum of 2 employees of this type can be on leave on any given day."</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="setup-column">
+                <button class="btn-setup" onclick="triggerSetup(5)">Auto-Setup Flow 5</button>
+            </div>
+        </div>
+
+        <!-- Flow 6 -->
+        <div class="flow-card color-6">
+            <div>
+                <span class="flow-id">Flow 6</span>
+                <h3 class="flow-title">Leave Integration with Driver Dispatch Pool</h3>
+                <p class="flow-description">
+                    Demonstrates how an approved leave request dynamically overrides driver roster status, marking them unavailable for auto-allocation rules.
+                </p>
+                <div class="steps">
+                    <strong>Step-by-Step Instructions:</strong>
+                    <ol>
+                        <li>Click Setup. This registers driver <strong>Siti Aisha</strong> as on leave today and logs you in as a Dispatcher.</li>
+                        <li>Click <strong>Drivers</strong> in the nav bar. Observe that Siti Aisha is listed as <strong>On Leave</strong> (instead of Available).</li>
+                        <li>Return to the hub and attempt to dispatch container <strong>NYKU9012455</strong>. Notice that Siti Aisha is bypassed, and the system chooses the next available driver.</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="setup-column">
+                <button class="btn-setup" onclick="triggerSetup(6)">Auto-Setup Flow 6</button>
+            </div>
+        </div>
+
+        <!-- Flow 7 -->
+        <div class="flow-card color-7">
+            <div>
+                <span class="flow-id">Flow 7</span>
+                <h3 class="flow-title">Shift Schedule Roster &amp; Profile Updates (CRUD)</h3>
+                <p class="flow-description">
+                    Demonstrates full CRUD operations on logistics assets. The Fleet Manager registers new drivers, amends phone details/statuses, and adjusts their weekly 12-hour staggered schedules.
+                </p>
+                <div class="steps">
+                    <strong>Step-by-Step Instructions:</strong>
+                    <ol>
+                        <li>Click Setup to log in as Fleet Manager and open the Roster Manager dashboard (`/fleet`).</li>
+                        <li>Scroll down and create a new driver (e.g., name "Ali Hasan", phone "+65 8234 5678"). Click Add.</li>
+                        <li>Update a driver's phone number or set their status to Offline.</li>
+                        <li>Change weekly shift timings for Marcus Chen. Confirm changes are updated.</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="setup-column">
+                <button class="btn-setup" onclick="triggerSetup(7)">Auto-Setup Flow 7</button>
+            </div>
+        </div>
+
+        <!-- Flow 8 -->
+        <div class="flow-card color-8">
+            <div>
+                <span class="flow-id">Flow 8</span>
+                <h3 class="flow-title">Role-Based Access Control and Security Separation</h3>
+                <p class="flow-description">
+                    Verifies cryptographic JWT signature claims and role checks. A Planner has access to the ops hub but is blocked from visiting administration grids or executive analytics.
+                </p>
+                <div class="steps">
+                    <strong>Step-by-Step Instructions:</strong>
+                    <ol>
+                        <li>Click Setup to log in as <strong>planner_user</strong>.</li>
+                        <li>Try to visit the fleet management page by typing `/fleet` in the URL bar, or visit the analytics dashboard at `/analytics`.</li>
+                        <li>Notice you are redirected back to the dashboard with an Access Denied message.</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="setup-column">
+                <button class="btn-setup" onclick="triggerSetup(8)">Auto-Setup Flow 8</button>
+            </div>
+        </div>
+
+        <!-- Flow 9 -->
+        <div class="flow-card color-9">
+            <div>
+                <span class="flow-id">Flow 9</span>
+                <h3 class="flow-title">Live GPS Simulation Ticks &amp; Event Replay Audit Trail</h3>
+                <p class="flow-description">
+                    Shows the real-time simulation updates and historic event auditing. Users can play back events step-by-step to replay the delivery journey of any container.
+                </p>
+                <div class="steps">
+                    <strong>Step-by-Step Instructions:</strong>
+                    <ol>
+                        <li>Click Setup to log in as Fleet Manager and visit the Event Replay dashboard (`/replay`).</li>
+                        <li>Select container <strong>TEMU4810239</strong> from the filter list.</li>
+                        <li>Click load and check the event log trail. Step through individual events to trace how dates, coordinates, and operators changed.</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="setup-column">
+                <button class="btn-setup" onclick="triggerSetup(9)">Auto-Setup Flow 9</button>
+            </div>
+        </div>
+
+        <!-- Flow 10 -->
+        <div class="flow-card color-10">
+            <div>
+                <span class="flow-id">Flow 10</span>
+                <h3 class="flow-title">Demurrage Analytics &amp; Financial Exports</h3>
+                <p class="flow-description">
+                    Calculates and reports financial savings from avoiding demurrage and storage rent penalties. The Fleet Manager can export the findings to a zipped report containing CSV files.
+                </p>
+                <div class="steps">
+                    <strong>Step-by-Step Instructions:</strong>
+                    <ol>
+                        <li>Click Setup to pre-seed completed deliveries that incurred demurrage/rent and open `/analytics`.</li>
+                        <li>Observe the Carrier Benchmark table showing calculated fines and port rent leakage.</li>
+                        <li>Click <strong>Export Analytics CSV Report</strong>. Observe a ZIP file download containing the processed reports.</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="setup-column">
+                <button class="btn-setup" onclick="triggerSetup(10)">Auto-Setup Flow 10</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function triggerSetup(flowId) {
+    fetch(`/api/walkthrough/setup/${flowId}`, {
+        method: 'POST'
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            window.location.href = data.redirect;
+        } else {
+            console.error(`Setup failed: ${data.message}`);
+            alert(`Setup failed: ${data.message}`);
+        }
+    })
+    .catch(e => {
+        console.error(`Request error: ${e}`);
+        alert(`Request error: ${e}`);
+    });
+}
+</script>
+</body>
+</html>
