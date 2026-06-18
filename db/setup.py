@@ -69,10 +69,10 @@ def run_setup(host, user, password, database):
 
 def main():
     parser = argparse.ArgumentParser(description='Create escalation_db schema and load seed data.')
-    parser.add_argument('--host', default=os.getenv('DB_HOST', 'localhost'))
-    parser.add_argument('--user', default=os.getenv('DB_USER', 'root'))
-    parser.add_argument('--password', default=os.getenv('DB_PASSWORD', ''))
-    parser.add_argument('--database', default=os.getenv('DB_NAME', 'escalation_db'))
+    parser.add_argument('--host', default=os.getenv('DB_HOST'))
+    parser.add_argument('--user', default=os.getenv('DB_USER'))
+    parser.add_argument('--password', default=os.getenv('DB_PASSWORD'))
+    parser.add_argument('--database', default=os.getenv('DB_NAME'))
     args = parser.parse_args()
 
     try:
