@@ -8,13 +8,13 @@ def fetch_containers_dashboard(cursor):
                DATE_FORMAT(c.lfd_datetime, '%Y-%m-%dT%H:%i:%s') as lfd_iso_string,
                c.lfd_datetime,
                IFNULL(t.dispatch_status_code, 'Pending') as current_dispatch_status,
-               t.accepted_at, t.picked_up_at, t.driver_id AS assigned_driver_id,
+               t.accepted_at, t.picked_up_at, da.driver_id AS assigned_driver_id,
                (psb.booking_id IS NOT NULL) AS port_slot_booked,
                dl.latitude AS driver_lat, dl.longitude AS driver_lng, dl.speed_kph, d.driver_name,
                CASE 
                    WHEN t.dispatch_status_code = 'At Warehouse' THEN 'AT WAREHOUSE'
                    WHEN t.dispatch_status_code = 'At Port' THEN 'AT PORT'
-                   WHEN t.dispatch_status_code = 'Dispatched' AND t.driver_id IS NULL THEN 'EMERGENCY'
+                   WHEN t.dispatch_status_code = 'Dispatched' AND da.driver_id IS NULL THEN 'EMERGENCY'
                    WHEN t.dispatch_status_code = 'Dispatched' AND t.accepted_at IS NULL THEN 'AWAITING'
                    WHEN t.dispatch_status_code = 'Dispatched' AND t.picked_up_at IS NULL AND t.accepted_at IS NOT NULL AND psb.booking_id IS NULL THEN 'SLOT WAIT'
                    WHEN t.dispatch_status_code = 'Dispatched' AND t.picked_up_at IS NULL THEN 'TO PORT'
@@ -27,7 +27,8 @@ def fetch_containers_dashboard(cursor):
         JOIN voyages vy ON vy.voyage_id = c.voyage_id
         JOIN vessels v ON v.vessel_id = vy.vessel_id
         LEFT JOIN truck_allocations t ON c.container_number = t.container_number
-        LEFT JOIN drivers d ON t.driver_id = d.driver_id
+        LEFT JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('accepted', 'completed')
+        LEFT JOIN drivers d ON da.driver_id = d.driver_id
         LEFT JOIN driver_locations dl ON dl.driver_id = d.driver_id
         LEFT JOIN port_slot_bookings psb ON psb.allocation_id = t.allocation_id AND psb.released_at IS NULL
         ORDER BY c.lfd_datetime ASC
@@ -52,7 +53,8 @@ def fetch_fleet_savings(cursor, emergency_driver_rate, store_rent_rate, demurrag
         SELECT c.lfd_datetime, c.discharge_datetime, t.allocated_at
         FROM containers c
         JOIN truck_allocations t ON c.container_number = t.container_number
-        WHERE t.dispatch_status_code = 'Dispatched' AND t.driver_id IS NOT NULL
+        LEFT JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('accepted', 'completed')
+        WHERE t.dispatch_status_code = 'Dispatched' AND da.driver_id IS NOT NULL
     """)
     internal_dispatches = cursor.fetchall()
 
@@ -145,10 +147,10 @@ def find_accepted_assignment(cursor, allocation_id, driver_id=None):
 
 def allocate_vessel_container(cursor, container_number, driver_id):
     cursor.execute("""
-        INSERT INTO truck_allocations (container_number, driver_id, urgency_score, dispatch_status_code, accepted_at)
-        VALUES (%s, %s, 95, 'Dispatched', NULL)
-        ON DUPLICATE KEY UPDATE driver_id = %s, dispatch_status_code = 'Dispatched', accepted_at = NULL
-    """, (container_number, driver_id, driver_id))
+        INSERT INTO truck_allocations (container_number, urgency_score, dispatch_status_code, accepted_at)
+        VALUES (%s, 95, 'Dispatched', NULL)
+        ON DUPLICATE KEY UPDATE dispatch_status_code = 'Dispatched', accepted_at = NULL
+    """, (container_number,))
     
     cursor.execute(
         "SELECT allocation_id FROM truck_allocations WHERE container_number = %s",
@@ -158,9 +160,9 @@ def allocate_vessel_container(cursor, container_number, driver_id):
 
 def allocate_emergency_container(cursor, container_number):
     cursor.execute("""
-        INSERT INTO truck_allocations (container_number, driver_id, urgency_score, dispatch_status_code)
-        VALUES (%s, NULL, 150, 'Dispatched') 
-        ON DUPLICATE KEY UPDATE dispatch_status_code = 'Dispatched', urgency_score = 150, driver_id = NULL
+        INSERT INTO truck_allocations (container_number, urgency_score, dispatch_status_code)
+        VALUES (%s, 150, 'Dispatched') 
+        ON DUPLICATE KEY UPDATE dispatch_status_code = 'Dispatched', urgency_score = 150
     """, (container_number,))
     
     cursor.execute(
@@ -171,7 +173,7 @@ def allocate_emergency_container(cursor, container_number):
 
 def fetch_allocation_by_container(cursor, container_number):
     cursor.execute(
-        "SELECT allocation_id, driver_id FROM truck_allocations WHERE container_number = %s",
+        "SELECT t.allocation_id, da.driver_id FROM truck_allocations t LEFT JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('accepted', 'completed') WHERE t.container_number = %s",
         (container_number,),
     )
     return cursor.fetchone()
@@ -241,8 +243,9 @@ def fetch_driver_active_job(cursor, driver_id):
         JOIN containers c ON c.container_number = t.container_number
         JOIN voyages vy ON vy.voyage_id = c.voyage_id
         JOIN vessels v ON v.vessel_id = vy.vessel_id
+        JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('pending', 'accepted', 'completed')
         LEFT JOIN port_slot_bookings psb ON psb.allocation_id = t.allocation_id AND psb.released_at IS NULL
-        WHERE t.driver_id = %s AND t.dispatch_status_code IN ('Dispatched', 'At Warehouse')
+        WHERE da.driver_id = %s AND t.dispatch_status_code IN ('Dispatched', 'At Warehouse')
         ORDER BY t.allocated_at DESC LIMIT 1
     """, (driver_id,))
     return cursor.fetchone()
@@ -251,7 +254,8 @@ def fetch_active_job_for_slot(cursor, driver_id):
     cursor.execute("""
         SELECT t.allocation_id, t.container_number, t.accepted_at
         FROM truck_allocations t
-        WHERE t.driver_id = %s AND t.dispatch_status_code = 'Dispatched'
+        JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('accepted', 'completed')
+        WHERE da.driver_id = %s AND t.dispatch_status_code = 'Dispatched'
         ORDER BY t.allocated_at DESC LIMIT 1
     """, (driver_id,))
     return cursor.fetchone()
@@ -275,7 +279,7 @@ def update_assignment_rejected(cursor, assignment_id):
 def reset_allocation_after_rejection(cursor, allocation_id):
     cursor.execute("""
         UPDATE truck_allocations
-        SET driver_id = NULL, dispatch_status_code = 'Pending', accepted_at = NULL
+        SET dispatch_status_code = 'Pending', accepted_at = NULL
         WHERE allocation_id = %s
     """, (allocation_id,))
 
@@ -299,7 +303,7 @@ def fetch_all_containers_etas(cursor):
     cursor.execute("""
         SELECT c.container_number, c.lfd_datetime,
                IFNULL(t.dispatch_status_code, 'Pending') AS dispatch_status,
-               t.accepted_at, t.picked_up_at, t.driver_id,
+               t.accepted_at, t.picked_up_at, da.driver_id,
                d.driver_name,
                dl.latitude AS driver_lat, dl.longitude AS driver_lng, dl.speed_kph,
                (t.dispatch_status_code = 'At Warehouse') AS at_warehouse,
@@ -308,7 +312,8 @@ def fetch_all_containers_etas(cursor):
                rej.reason AS rejection_reason
         FROM containers c
         LEFT JOIN truck_allocations t ON t.container_number = c.container_number
-        LEFT JOIN drivers d ON t.driver_id = d.driver_id
+        LEFT JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('pending', 'accepted', 'completed')
+        LEFT JOIN drivers d ON da.driver_id = d.driver_id
         LEFT JOIN driver_locations dl ON dl.driver_id = d.driver_id
         LEFT JOIN port_slot_bookings psb ON psb.allocation_id = t.allocation_id AND psb.released_at IS NULL
         LEFT JOIN (
@@ -332,8 +337,8 @@ def fetch_carrier_benchmarks(cursor, emergency_driver_rate, store_rent_rate, dem
     query = f"""
         SELECT v.vessel_name, 
                COUNT(c.container_number) AS total_dispatches,
-               COUNT(CASE WHEN t.dispatch_status_code = 'Dispatched' AND t.driver_id IS NULL THEN 1 END) AS emergency_hires,
-               SUM(CASE WHEN t.dispatch_status_code = 'Dispatched' AND t.driver_id IS NULL THEN {emergency_driver_rate} ELSE 0.00 END) AS total_extra_costs,
+               COUNT(CASE WHEN t.dispatch_status_code = 'Dispatched' AND da.driver_id IS NULL THEN 1 END) AS emergency_hires,
+               SUM(CASE WHEN t.dispatch_status_code = 'Dispatched' AND da.driver_id IS NULL THEN {emergency_driver_rate} ELSE 0.00 END) AS total_extra_costs,
                ROUND(SUM(
                    CASE 
                        WHEN TIMESTAMPDIFF(SECOND, c.lfd_datetime, NOW()) > 0 
@@ -352,6 +357,7 @@ def fetch_carrier_benchmarks(cursor, emergency_driver_rate, store_rent_rate, dem
         JOIN voyages vy ON vy.vessel_id = v.vessel_id
         LEFT JOIN containers c ON c.voyage_id = vy.voyage_id
         LEFT JOIN truck_allocations t ON c.container_number = t.container_number
+        LEFT JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('accepted', 'completed')
         GROUP BY v.vessel_name 
         ORDER BY total_extra_costs DESC, accumulated_store_rent DESC, accumulated_demurrage DESC
     """

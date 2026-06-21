@@ -26,7 +26,8 @@ from services.drivers import (
     fetch_live_drivers_telemetry, fetch_driver_by_id, add_driver as db_add_driver,
     update_driver as db_update_driver, remove_driver as db_remove_driver, fetch_driver_schedules,
     update_driver_schedule as db_update_driver_schedule, enrich_drivers_with_schedules,
-    get_fleet_status, get_next_shift_hint, pick_nearest_dispatchable_driver, update_driver_status
+    get_fleet_status, get_next_shift_hint, pick_nearest_dispatchable_driver, update_driver_status,
+    auto_reject_timed_out_assignments
 )
 from services.containers import (
     fetch_containers_dashboard, fetch_inbound_vessels, fetch_fleet_savings,
@@ -386,7 +387,8 @@ def leave_dashboard():
 @requires_authenticated_session()
 def leave_apply():
     employee_type = request.form.get('employee_type')
-    leave_date_str = request.form.get('leave_date')
+    start_date_str = request.form.get('start_date')
+    end_date_str = request.form.get('end_date')
     reason = request.form.get('reason', '')
     
     if employee_type == 'Planner':
@@ -399,13 +401,28 @@ def leave_apply():
         flash("Invalid employee category selected.", "danger")
         return redirect(url_for('leave_dashboard'))
         
-    if not employee_id or not leave_date_str:
-        flash("Missing employee selection or leave date.", "danger")
+    if not employee_id or not start_date_str or not end_date_str:
+        flash("Missing employee selection or leave dates.", "danger")
+        return redirect(url_for('leave_dashboard'))
+        
+    try:
+        start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
+        end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d").date()
+    except ValueError:
+        flash("Invalid date format.", "danger")
+        return redirect(url_for('leave_dashboard'))
+        
+    if start_date > end_date:
+        flash("Start Date cannot be after End Date.", "danger")
         return redirect(url_for('leave_dashboard'))
         
     cursor = mysql.connection.cursor()
     try:
-        apply_leave(cursor, employee_type, int(employee_id), leave_date_str, reason)
+        current_date = start_date
+        while current_date <= end_date:
+            apply_leave(cursor, employee_type, int(employee_id), current_date.isoformat(), reason)
+            current_date += datetime.timedelta(days=1)
+            
         mysql.connection.commit()
         flash("Leave request successfully approved.", "success")
     except ValueError as exc:
@@ -482,8 +499,8 @@ def walkthrough_setup(flow_id):
         elif flow_id == 2:
             login_user = (2, 'dispatcher_user', 'Dispatcher')
             cursor.execute("""
-                INSERT INTO truck_allocations (container_number, driver_id, urgency_score, dispatch_status_code)
-                VALUES ('NYKU9012455', 1, 95, 'Dispatched')
+                INSERT INTO truck_allocations (container_number, urgency_score, dispatch_status_code)
+                VALUES ('NYKU9012455', 95, 'Dispatched')
             """)
             cursor.execute("SELECT allocation_id FROM truck_allocations WHERE container_number = 'NYKU9012455'")
             alloc = cursor.fetchone()
@@ -507,15 +524,15 @@ def walkthrough_setup(flow_id):
         elif flow_id == 5:
             login_user = (3, 'manager_user', 'Fleet Manager')
             tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
-            cursor.execute("INSERT INTO leave_requests (employee_type, driver_id, leave_date, reason) VALUES ('Driver', 1, %s, 'Vacation')", (tomorrow,))
-            cursor.execute("INSERT INTO leave_requests (employee_type, driver_id, leave_date, reason) VALUES ('Driver', 2, %s, 'Sick')", (tomorrow,))
+            cursor.execute("INSERT INTO leave_requests (driver_id, leave_date, reason) VALUES (1, %s, 'Vacation')", (tomorrow,))
+            cursor.execute("INSERT INTO leave_requests (driver_id, leave_date, reason) VALUES (2, %s, 'Sick')", (tomorrow,))
             mysql.connection.commit()
             target_url = url_for('leave_dashboard')
             
         elif flow_id == 6:
             login_user = (2, 'dispatcher_user', 'Dispatcher')
             today = datetime.date.today().isoformat()
-            cursor.execute("INSERT INTO leave_requests (employee_type, driver_id, leave_date, reason) VALUES ('Driver', 2, %s, 'Vacation')", (today,))
+            cursor.execute("INSERT INTO leave_requests (driver_id, leave_date, reason) VALUES (2, %s, 'Vacation')", (today,))
             mysql.connection.commit()
             target_url = url_for('mis_dashboard')
             
@@ -534,7 +551,7 @@ def walkthrough_setup(flow_id):
         elif flow_id == 10:
             login_user = (3, 'manager_user', 'Fleet Manager')
             cursor.execute("UPDATE containers SET discharge_datetime = DATE_SUB(NOW(), INTERVAL 5 DAY), lfd_datetime = DATE_SUB(NOW(), INTERVAL 3 DAY) WHERE container_number = 'REDU0000001'")
-            cursor.execute("INSERT INTO truck_allocations (container_number, driver_id, urgency_score, dispatch_status_code) VALUES ('REDU0000001', 1, 95, 'At Warehouse')")
+            cursor.execute("INSERT INTO truck_allocations (container_number, urgency_score, dispatch_status_code) VALUES ('REDU0000001', 95, 'At Warehouse')")
             cursor.execute("SELECT allocation_id FROM truck_allocations WHERE container_number = 'REDU0000001'")
             alloc = cursor.fetchone()
             cursor.execute("INSERT INTO dispatch_assignments (allocation_id, driver_id, outcome_code, outcome_at) VALUES (%s, 1, 'completed', NOW())", (alloc['allocation_id'],))
@@ -597,7 +614,7 @@ def check_availability():
     container_num = data.get('container_number')
     
     cursor = mysql.connection.cursor()
-    fleet = get_fleet_status(cursor)
+    fleet = get_fleet_status(cursor, container_num=container_num)
 
     if fleet['dispatchable'] > 0:
         cursor.close()
@@ -623,7 +640,7 @@ def allocate_truck():
     cursor = mysql.connection.cursor()
     try:
         driver_id, driver_name, phone_tail = pick_nearest_dispatchable_driver(
-            cursor, MAP_PORT['lat'], MAP_PORT['lng'], MAP_DEPOT['lat'], MAP_DEPOT['lng']
+            cursor, MAP_PORT['lat'], MAP_PORT['lng'], MAP_DEPOT['lat'], MAP_DEPOT['lng'], container_num=container_num
         )
         if not driver_id:
             return jsonify({"status": "depleted", "message": "No on-shift drivers available. Use emergency dispatch."}), 409
@@ -657,9 +674,9 @@ def allocate_emergency():
     cursor = mysql.connection.cursor()
     try:
         cursor.execute("""
-            INSERT INTO truck_allocations (container_number, driver_id, urgency_score, dispatch_status_code)
-            VALUES (%s, NULL, 150, 'Dispatched') 
-            ON DUPLICATE KEY UPDATE dispatch_status_code = 'Dispatched', urgency_score = 150, driver_id = NULL
+            INSERT INTO truck_allocations (container_number, urgency_score, dispatch_status_code)
+            VALUES (%s, 150, 'Dispatched') 
+            ON DUPLICATE KEY UPDATE dispatch_status_code = 'Dispatched', urgency_score = 150
         """, (container_num,))
         cursor.execute(
             "SELECT allocation_id FROM truck_allocations WHERE container_number = %s",
@@ -722,8 +739,11 @@ def expunge_container():
         delete_allocation(cursor, container_num)
         delete_container(cursor, container_num)
         
+        from services.port_slots import get_slot_status
+        port_slots = get_slot_status(cursor)
+        
         mysql.connection.commit()
-        return jsonify({"status": "success"})
+        return jsonify({"status": "success", "port_slots": port_slots})
     except Exception as e:
         mysql.connection.rollback()
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -963,9 +983,11 @@ def driver_reject_job():
     cursor = mysql.connection.cursor()
     try:
         cursor.execute("""
-            SELECT allocation_id, driver_id, accepted_at
-            FROM truck_allocations
-            WHERE container_number = %s AND driver_id = %s AND dispatch_status_code = 'Dispatched'
+            SELECT t.allocation_id, da.driver_id, t.accepted_at
+            FROM truck_allocations t
+            JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id
+            WHERE t.container_number = %s AND da.driver_id = %s AND t.dispatch_status_code = 'Dispatched'
+            ORDER BY da.assigned_at DESC LIMIT 1
         """, (container_num, driver['driver_id']))
         allocation = cursor.fetchone()
         if not allocation:
@@ -1003,8 +1025,10 @@ def driver_accept_job():
     cursor = mysql.connection.cursor()
     try:
         cursor.execute("""
-            SELECT allocation_id FROM truck_allocations
-            WHERE container_number = %s AND driver_id = %s AND accepted_at IS NULL
+            SELECT t.allocation_id FROM truck_allocations t
+            JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id
+            WHERE t.container_number = %s AND da.driver_id = %s AND t.accepted_at IS NULL
+            ORDER BY da.assigned_at DESC LIMIT 1
         """, (container_num, driver['driver_id']))
         allocation = cursor.fetchone()
         if not allocation:
@@ -1140,6 +1164,8 @@ def lfd_traffic_light(lfd_datetime, as_of=None):
 def container_etas_api():
     _maybe_advance_simulation()
     cursor = mysql.connection.cursor()
+    auto_reject_timed_out_assignments(cursor)
+    mysql.connection.commit()
     rows = fetch_all_containers_etas(cursor)
     fleet = get_fleet_status(cursor)
     cursor.close()

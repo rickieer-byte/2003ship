@@ -34,11 +34,12 @@ def get_port_capacity(cursor, port_id=DEFAULT_PORT_ID):
 
 def fetch_active_bookings(cursor, port_id=DEFAULT_PORT_ID):
     cursor.execute("""
-        SELECT b.booking_id, b.slot_number, b.allocation_id, b.driver_id,
-               b.booked_at, d.driver_name, t.container_number
+        SELECT b.booking_id, b.slot_number, b.allocation_id, da.driver_id,
+               b.booked_at, COALESCE(d.driver_name, 'Emergency Contractor') AS driver_name, t.container_number
         FROM port_slot_bookings b
-        JOIN drivers d ON d.driver_id = b.driver_id
         JOIN truck_allocations t ON t.allocation_id = b.allocation_id
+        LEFT JOIN dispatch_assignments da ON da.allocation_id = b.allocation_id AND da.outcome_code IN ('accepted', 'completed')
+        LEFT JOIN drivers d ON d.driver_id = da.driver_id
         WHERE b.port_id = %s AND b.released_at IS NULL
         ORDER BY b.slot_number
     """, (port_id,))
@@ -97,9 +98,9 @@ def book_slot(cursor, allocation_id, driver_id, container_number, port_id=DEFAUL
         return None
 
     cursor.execute("""
-        INSERT INTO port_slot_bookings (port_id, slot_number, allocation_id, driver_id)
-        VALUES (%s, %s, %s, %s)
-    """, (port_id, slot_number, allocation_id, driver_id))
+        INSERT INTO port_slot_bookings (port_id, slot_number, allocation_id)
+        VALUES (%s, %s, %s)
+    """, (port_id, slot_number, allocation_id))
 
     cursor.execute(
         "INSERT INTO events (container_number, source_api, event_type, raw_payload) VALUES (%s, %s, %s, %s)",

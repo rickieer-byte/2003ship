@@ -6,11 +6,16 @@ import MySQLdb
 def fetch_all_leaves(cursor):
     """Retrieve all approved leave requests with details of Planners, Dispatchers, and Drivers."""
     cursor.execute("""
-        SELECT lr.leave_id, lr.employee_type, lr.leave_date, lr.reason, lr.created_at,
+        SELECT lr.leave_id, 
+               CASE WHEN lr.driver_id IS NOT NULL THEN 'Driver' 
+                    WHEN r.role_name = 'Planner' THEN 'Planner'
+                    ELSE 'Dispatcher' END AS employee_type, 
+               lr.leave_date, lr.reason, lr.created_at,
                u.username AS user_name, u.email AS user_email,
                d.driver_name, d.phone_number AS driver_phone
         FROM leave_requests lr
         LEFT JOIN users u ON lr.user_id = u.user_id
+        LEFT JOIN roles r ON u.role_id = r.role_id
         LEFT JOIN drivers d ON lr.driver_id = d.driver_id
         ORDER BY lr.leave_date DESC, lr.created_at DESC
     """)
@@ -32,10 +37,10 @@ def apply_leave(cursor, employee_type, employee_id, leave_date, reason):
     try:
         cursor.execute(
             """
-            INSERT INTO leave_requests (employee_type, user_id, driver_id, leave_date, reason)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO leave_requests (user_id, driver_id, leave_date, reason)
+            VALUES (%s, %s, %s, %s)
             """,
-            (employee_type, user_id, driver_id, leave_date, reason)
+            (user_id, driver_id, leave_date, reason)
         )
     except (MySQLdb.DatabaseError, Exception) as exc:
         msg = str(exc)

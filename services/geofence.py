@@ -34,10 +34,11 @@ def _fetch_warehouse(cursor, warehouse_id):
 def process_port_pickups(cursor, radius_km=2.0):
     """Driver enters port with a booked slot, loads container, slot freed on departure."""
     cursor.execute("""
-        SELECT t.container_number, t.driver_id, t.allocation_id,
+        SELECT t.container_number, da.driver_id, t.allocation_id,
                dl.latitude, dl.longitude, d.driver_name
         FROM truck_allocations t
-        JOIN drivers d ON d.driver_id = t.driver_id
+        JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('accepted', 'completed')
+        JOIN drivers d ON d.driver_id = da.driver_id
         JOIN driver_locations dl ON dl.driver_id = d.driver_id
         WHERE t.dispatch_status_code = 'Dispatched'
           AND t.accepted_at IS NOT NULL
@@ -79,10 +80,11 @@ def process_port_pickups(cursor, radius_km=2.0):
 def process_warehouse_arrivals(cursor):
     """Container delivered to de-stuff yard — ready for POD; driver freed if still on shift."""
     cursor.execute("""
-        SELECT t.container_number, t.driver_id, t.allocation_id, t.warehouse_id,
+        SELECT t.container_number, da.driver_id, t.allocation_id, t.warehouse_id,
                dl.latitude, dl.longitude, d.driver_name
         FROM truck_allocations t
-        JOIN drivers d ON d.driver_id = t.driver_id
+        JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('accepted', 'completed')
+        JOIN drivers d ON d.driver_id = da.driver_id
         JOIN driver_locations dl ON dl.driver_id = d.driver_id
         WHERE t.dispatch_status_code = 'Dispatched'
           AND t.picked_up_at IS NOT NULL

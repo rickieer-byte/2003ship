@@ -141,11 +141,13 @@ def allocation_row(container):
 
     cur.execute(
 
-        """SELECT t.*, d.driver_name, d.phone_number
+        """SELECT t.*, da.driver_id, d.driver_name, d.phone_number
 
            FROM truck_allocations t
 
-           LEFT JOIN drivers d ON d.driver_id = t.driver_id
+           LEFT JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('pending', 'accepted', 'completed')
+
+           LEFT JOIN drivers d ON d.driver_id = da.driver_id
 
            WHERE t.container_number = %s""",
 

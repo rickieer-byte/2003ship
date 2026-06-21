@@ -94,7 +94,8 @@ def tick_driver_gps(cursor):
                            WHERE b.allocation_id = t.allocation_id AND b.released_at IS NULL
                        ) AS has_active_slot
                 FROM truck_allocations t
-                WHERE t.driver_id = %s AND t.dispatch_status_code = 'Dispatched'
+                JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('accepted', 'completed')
+                WHERE da.driver_id = %s AND t.dispatch_status_code = 'Dispatched'
                 LIMIT 1
             """, (row['driver_id'],))
             job = cursor.fetchone()

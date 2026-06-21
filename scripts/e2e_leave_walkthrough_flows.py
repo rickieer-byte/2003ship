@@ -56,7 +56,7 @@ def main():
     tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
     try:
         cur.execute(
-            "INSERT INTO leave_requests (employee_type, driver_id, leave_date, reason) VALUES ('Driver', 1, %s, 'Doctor Appointment')",
+            "INSERT INTO leave_requests (driver_id, leave_date, reason) VALUES (1, %s, 'Doctor Appointment')",
             (tomorrow,)
         )
         conn.commit()
@@ -68,7 +68,7 @@ def main():
     # 3. Add second driver leave request for tomorrow
     try:
         cur.execute(
-            "INSERT INTO leave_requests (employee_type, driver_id, leave_date, reason) VALUES ('Driver', 2, %s, 'Vacation')",
+            "INSERT INTO leave_requests (driver_id, leave_date, reason) VALUES (2, %s, 'Vacation')",
             (tomorrow,)
         )
         conn.commit()
@@ -80,7 +80,7 @@ def main():
     # 4. Try to add a THIRD driver leave request for tomorrow (should trigger the SQL constraint trigger!)
     try:
         cur.execute(
-            "INSERT INTO leave_requests (employee_type, driver_id, leave_date, reason) VALUES ('Driver', 3, %s, 'Family Event')",
+            "INSERT INTO leave_requests (driver_id, leave_date, reason) VALUES (3, %s, 'Family Event')",
             (tomorrow,)
         )
         conn.commit()
@@ -97,7 +97,7 @@ def main():
     # 5. Try to insert a duplicate leave request for driver 1 tomorrow
     try:
         cur.execute(
-            "INSERT INTO leave_requests (employee_type, driver_id, leave_date, reason) VALUES ('Driver', 1, %s, 'Duplicate check')",
+            "INSERT INTO leave_requests (driver_id, leave_date, reason) VALUES (1, %s, 'Duplicate check')",
             (tomorrow,)
         )
         conn.commit()
@@ -111,7 +111,7 @@ def main():
     try:
         # planner_user is user_id 1
         cur.execute(
-            "INSERT INTO leave_requests (employee_type, user_id, leave_date, reason) VALUES ('Planner', 1, %s, 'Annual Leave')",
+            "INSERT INTO leave_requests (user_id, leave_date, reason) VALUES (1, %s, 'Annual Leave')",
             (today,)
         )
         conn.commit()

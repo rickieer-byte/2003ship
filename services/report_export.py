@@ -37,7 +37,8 @@ def fetch_jobs_sheet(cursor):
         JOIN voyages vy ON vy.voyage_id = c.voyage_id
         JOIN vessels v ON v.vessel_id = vy.vessel_id
         LEFT JOIN truck_allocations t ON t.container_number = c.container_number
-        LEFT JOIN drivers d_assigned ON d_assigned.driver_id = t.driver_id
+        LEFT JOIN dispatch_assignments da_assigned ON da_assigned.allocation_id = t.allocation_id AND da_assigned.outcome_code IN ('accepted', 'completed')
+        LEFT JOIN drivers d_assigned ON d_assigned.driver_id = da_assigned.driver_id
         LEFT JOIN (
             SELECT
                 t2.container_number,
@@ -85,8 +86,8 @@ def fetch_carrier_performance_sheet(cursor):
     query = f"""
         SELECT v.vessel_name,
                COUNT(c.container_number) AS total_dispatches,
-               COUNT(CASE WHEN t.dispatch_status_code = 'Dispatched' AND t.driver_id IS NULL THEN 1 END) AS emergency_hires,
-               SUM(CASE WHEN t.dispatch_status_code = 'Dispatched' AND t.driver_id IS NULL
+               COUNT(CASE WHEN t.dispatch_status_code = 'Dispatched' AND da.driver_id IS NULL THEN 1 END) AS emergency_hires,
+               SUM(CASE WHEN t.dispatch_status_code = 'Dispatched' AND da.driver_id IS NULL
                    THEN {EMERGENCY_DRIVER_FLAT_RATE} ELSE 0.00 END) AS total_extra_costs,
                ROUND(SUM(
                    CASE WHEN TIMESTAMPDIFF(SECOND, c.lfd_datetime, NOW()) > 0
@@ -105,6 +106,7 @@ def fetch_carrier_performance_sheet(cursor):
         JOIN voyages vy ON vy.vessel_id = v.vessel_id
         LEFT JOIN containers c ON c.voyage_id = vy.voyage_id
         LEFT JOIN truck_allocations t ON c.container_number = t.container_number
+        LEFT JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('accepted', 'completed')
         GROUP BY v.vessel_name
         ORDER BY total_extra_costs DESC, accumulated_store_rent DESC
     """

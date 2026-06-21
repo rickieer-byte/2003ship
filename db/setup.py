@@ -60,6 +60,8 @@ def run_setup(host, user, password, database):
         conn.select_db(database)
         print('Applying seed.sql…')
         run_file(cursor, os.path.join(ROOT, 'seed.sql'))
+        print('Applying migrate_12h_shifts.sql...')
+        run_file(cursor, os.path.join(ROOT, 'migrate_12h_shifts.sql'))
         conn.commit()
         print(f'Database "{database}" is ready.')
     finally:

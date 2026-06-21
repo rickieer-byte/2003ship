@@ -89,43 +89,45 @@ def update_driver_schedule(cursor, driver_id, schedule_days):
 
 def driver_has_active_allocation(driver_id, cursor):
     cursor.execute("""
-        SELECT 1 FROM truck_allocations
-        WHERE driver_id = %s AND dispatch_status_code IN ('Dispatched', 'At Warehouse')
+        SELECT 1 FROM truck_allocations t
+        JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('pending', 'accepted', 'completed')
+        WHERE da.driver_id = %s AND t.dispatch_status_code IN ('Dispatched', 'At Warehouse')
         LIMIT 1
     """, (driver_id,))
     return cursor.fetchone() is not None
 
-def driver_in_rejection_cooldown(driver_id, cursor, as_of=None):
-    as_of = as_of or datetime.datetime.now()
+def driver_rejected_container(driver_id, cursor, container_num=None):
+    if not container_num:
+        return False
     cursor.execute(
         """
         SELECT 1 FROM job_rejections jr
         JOIN dispatch_assignments da ON da.assignment_id = jr.assignment_id
-        WHERE da.driver_id = %s
-          AND jr.rejected_at > DATE_SUB(%s, INTERVAL %s HOUR)
+        JOIN truck_allocations t ON t.allocation_id = da.allocation_id
+        WHERE da.driver_id = %s AND t.container_number = %s
         LIMIT 1
         """,
-        (driver_id, as_of, REJECTION_COOLDOWN_HOURS),
+        (driver_id, container_num),
     )
     return cursor.fetchone() is not None
 
-def driver_is_dispatchable(driver_id, status_code, cursor, as_of=None):
+def driver_is_dispatchable(driver_id, status_code, cursor, as_of=None, container_num=None):
     if status_code != 'Available':
         return False
     if driver_has_active_allocation(driver_id, cursor):
         return False
-    if driver_in_rejection_cooldown(driver_id, cursor, as_of):
+    if driver_rejected_container(driver_id, cursor, container_num):
         return False
     return driver_is_on_shift(driver_id, cursor, as_of)
 
-def count_dispatchable_drivers(cursor, as_of=None):
+def count_dispatchable_drivers(cursor, as_of=None, container_num=None):
     cursor.execute("SELECT driver_id, status_code FROM drivers")
     return sum(
         1 for d in cursor.fetchall()
-        if driver_is_dispatchable(d['driver_id'], d['status_code'], cursor, as_of)
+        if driver_is_dispatchable(d['driver_id'], d['status_code'], cursor, as_of, container_num)
     )
 
-def pick_nearest_dispatchable_driver(cursor, port_lat, port_lng, depot_lat, depot_lng):
+def pick_nearest_dispatchable_driver(cursor, port_lat, port_lng, depot_lat, depot_lng, container_num=None):
     cursor.execute("""
         SELECT d.driver_id, d.driver_name, d.phone_number, d.status_code,
                dl.latitude, dl.longitude
@@ -136,7 +138,7 @@ def pick_nearest_dispatchable_driver(cursor, port_lat, port_lng, depot_lat, depo
     best = None
     best_dist = None
     for candidate in cursor.fetchall():
-        if not driver_is_dispatchable(candidate['driver_id'], candidate['status_code'], cursor):
+        if not driver_is_dispatchable(candidate['driver_id'], candidate['status_code'], cursor, container_num=container_num):
             continue
         lat = float(candidate['latitude'] or depot_lat)
         lng = float(candidate['longitude'] or depot_lng)
@@ -170,22 +172,26 @@ def enrich_drivers_with_schedules(drivers, schedule_map, cursor, as_of=None):
         d = dict(driver)
         driver_id = driver['driver_id']
         
-        # Check if driver is on leave today
+        # Check if driver is on leave today (for shifts starting later today)
         cursor.execute(
-            "SELECT 1 FROM leave_requests WHERE employee_type = 'Driver' AND driver_id = %s AND leave_date = %s",
+            "SELECT 1 FROM leave_requests WHERE driver_id = %s AND leave_date = %s",
             (driver_id, as_of_date),
         )
-        on_leave = cursor.fetchone() is not None
+        has_leave_today = cursor.fetchone() is not None
         
         d['schedule_summary'] = format_schedule_summary(schedule_map, driver_id)
         days = schedule_map.get(driver_id, {})
         dow = as_of.weekday()
-        d['on_shift'] = driver_is_on_shift(driver_id, cursor, as_of)
         
-        if on_leave:
+        from services.shifts import check_shift_and_leave
+        is_on_shift, is_missing_active_shift = check_shift_and_leave(driver_id, cursor, as_of)
+        d['on_shift'] = is_on_shift
+        
+        if is_missing_active_shift or has_leave_today:
             d['on_shift'] = False
             d['today_hours'] = "On Leave"
-            d['current_status'] = "On Leave"
+            if is_missing_active_shift:
+                d['current_status'] = "On Leave"
         else:
             if dow in days:
                 d['today_hours'] = f"{days[dow]['shift_start']} – {days[dow]['shift_end']}"
@@ -196,7 +202,7 @@ def enrich_drivers_with_schedules(drivers, schedule_map, cursor, as_of=None):
         enriched.append(d)
     return enriched
 
-def get_fleet_status(cursor, as_of=None):
+def get_fleet_status(cursor, as_of=None, container_num=None):
     as_of = as_of or datetime.datetime.now()
     cursor.execute("SELECT driver_id, status_code, driver_name FROM drivers")
     dispatchable = off_shift_available = on_delivery = offline = 0
@@ -209,7 +215,7 @@ def get_fleet_status(cursor, as_of=None):
             on_delivery += 1
         elif status == 'Offline':
             offline += 1
-        elif driver_is_dispatchable(driver['driver_id'], status, cursor, as_of):
+        elif driver_is_dispatchable(driver['driver_id'], status, cursor, as_of, container_num):
             dispatchable += 1
         elif status == 'Available':
             off_shift_available += 1
@@ -260,3 +266,11 @@ def get_next_shift_hint(cursor, as_of=None):
 
 def update_driver_status(cursor, driver_id, status):
     cursor.execute("UPDATE drivers SET status_code = %s WHERE driver_id = %s", (status, driver_id))
+
+def auto_reject_timed_out_assignments(cursor):
+    cursor.execute("SELECT assignment_id FROM dispatch_assignments WHERE outcome_code = 'pending' AND assigned_at < DATE_SUB(NOW(), INTERVAL 15 MINUTE)")
+    for row in cursor.fetchall():
+        assignment_id = row['assignment_id']
+        cursor.execute("INSERT INTO job_rejections (assignment_id, rejected_at, reason) VALUES (%s, NOW(), 'Auto-timeout after 15 minutes')", (assignment_id,))
+        cursor.execute("UPDATE dispatch_assignments SET outcome_code = 'rejected', outcome_at = NOW() WHERE assignment_id = %s", (assignment_id,))
+        cursor.execute("UPDATE truck_allocations SET dispatch_status_code = 'Pending', accepted_at = NULL WHERE allocation_id = (SELECT allocation_id FROM dispatch_assignments WHERE assignment_id = %s)", (assignment_id,))

@@ -223,7 +223,6 @@ CREATE TABLE driver_schedules (
 CREATE TABLE truck_allocations (
     allocation_id INT AUTO_INCREMENT PRIMARY KEY,
     container_number VARCHAR(11) NOT NULL,
-    driver_id INT NULL,
     urgency_score INT DEFAULT 0,
     dispatch_status_code VARCHAR(20) NOT NULL DEFAULT 'Pending',
     warehouse_id VARCHAR(20) NOT NULL DEFAULT 'WH-JURONG',
@@ -233,7 +232,6 @@ CREATE TABLE truck_allocations (
     at_port_at DATETIME DEFAULT NULL,
     UNIQUE KEY unique_container (container_number),
     FOREIGN KEY (container_number) REFERENCES containers(container_number) ON DELETE CASCADE,
-    FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE SET NULL,
     FOREIGN KEY (dispatch_status_code) REFERENCES dispatch_statuses(status_code),
     FOREIGN KEY (warehouse_id) REFERENCES warehouses(warehouse_id),
     INDEX idx_allocations_status (dispatch_status_code)
@@ -291,12 +289,10 @@ CREATE TABLE port_slot_bookings (
     port_id VARCHAR(20) NOT NULL,
     slot_number TINYINT UNSIGNED NOT NULL,
     allocation_id INT NOT NULL,
-    driver_id INT NOT NULL,
     booked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     released_at DATETIME DEFAULT NULL,
     FOREIGN KEY (port_id) REFERENCES ports(port_id),
     FOREIGN KEY (allocation_id) REFERENCES truck_allocations(allocation_id) ON DELETE CASCADE,
-    FOREIGN KEY (driver_id) REFERENCES drivers(driver_id),
     INDEX idx_slot_bookings_active (port_id, released_at),
     INDEX idx_slot_bookings_allocation (allocation_id, released_at)
 );
@@ -332,7 +328,6 @@ CREATE TABLE users (
 -- ---------------------------------------------------------------------------
 CREATE TABLE leave_requests (
     leave_id INT AUTO_INCREMENT PRIMARY KEY,
-    employee_type VARCHAR(20) NOT NULL COMMENT 'Planner, Dispatcher, Driver',
     user_id INT NULL COMMENT 'References users.user_id if Planner or Dispatcher',
     driver_id INT NULL COMMENT 'References drivers.driver_id if Driver',
     leave_date DATE NOT NULL,
@@ -340,7 +335,7 @@ CREATE TABLE leave_requests (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
     FOREIGN KEY (driver_id) REFERENCES drivers(driver_id) ON DELETE CASCADE,
-    UNIQUE KEY unique_employee_leave (employee_type, user_id, driver_id, leave_date)
+    UNIQUE KEY unique_employee_leave (user_id, driver_id, leave_date)
 );
 
 DELIMITER //
@@ -349,13 +344,29 @@ BEFORE INSERT ON leave_requests
 FOR EACH ROW
 BEGIN
     DECLARE leave_count INT;
-    SELECT COUNT(*) INTO leave_count
-    FROM leave_requests
-    WHERE employee_type = NEW.employee_type
-      AND leave_date = NEW.leave_date;
-    IF leave_count >= 2 THEN
-        SIGNAL SQLSTATE '45000'
-        SET MESSAGE_TEXT = 'Leave limit reached: A maximum of 2 employees of this type can be on leave on any given day.';
+    DECLARE user_role_id TINYINT;
+    DECLARE total_users INT;
+
+    IF NEW.driver_id IS NOT NULL THEN
+        SELECT COUNT(*) INTO leave_count FROM leave_requests WHERE leave_date = NEW.leave_date AND driver_id IS NOT NULL;
+        IF leave_count >= 2 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Leave limit reached: A maximum of 2 drivers can be on leave on any given day.';
+        END IF;
+    ELSEIF NEW.user_id IS NOT NULL THEN
+        SELECT role_id INTO user_role_id FROM users WHERE user_id = NEW.user_id;
+        SELECT COUNT(*) INTO total_users FROM users WHERE role_id = user_role_id;
+        SELECT COUNT(*) INTO leave_count
+        FROM leave_requests lr
+        JOIN users u ON u.user_id = lr.user_id
+        WHERE lr.leave_date = NEW.leave_date 
+          AND lr.driver_id IS NULL
+          AND u.role_id = user_role_id;
+
+        IF total_users - leave_count <= 1 THEN
+            SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Leave limit reached: At least 1 employee of this role must remain on duty.';
+        END IF;
     END IF;
 END //
 DELIMITER ;
@@ -366,14 +377,30 @@ BEFORE UPDATE ON leave_requests
 FOR EACH ROW
 BEGIN
     DECLARE leave_count INT;
-    IF (NEW.leave_date != OLD.leave_date OR NEW.employee_type != OLD.employee_type) THEN
-        SELECT COUNT(*) INTO leave_count
-        FROM leave_requests
-        WHERE employee_type = NEW.employee_type
-          AND leave_date = NEW.leave_date;
-        IF leave_count >= 2 THEN
-            SIGNAL SQLSTATE '45000'
-            SET MESSAGE_TEXT = 'Leave limit reached: A maximum of 2 employees of this type can be on leave on any given day.';
+    DECLARE user_role_id TINYINT;
+    DECLARE total_users INT;
+
+    IF NEW.leave_date != OLD.leave_date THEN
+        IF NEW.driver_id IS NOT NULL THEN
+            SELECT COUNT(*) INTO leave_count FROM leave_requests WHERE leave_date = NEW.leave_date AND driver_id IS NOT NULL;
+            IF leave_count >= 2 THEN
+                SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'Leave limit reached: A maximum of 2 drivers can be on leave on any given day.';
+            END IF;
+        ELSEIF NEW.user_id IS NOT NULL THEN
+            SELECT role_id INTO user_role_id FROM users WHERE user_id = NEW.user_id;
+            SELECT COUNT(*) INTO total_users FROM users WHERE role_id = user_role_id;
+            SELECT COUNT(*) INTO leave_count
+            FROM leave_requests lr
+            JOIN users u ON u.user_id = lr.user_id
+            WHERE lr.leave_date = NEW.leave_date 
+              AND lr.driver_id IS NULL
+              AND u.role_id = user_role_id;
+
+            IF total_users - leave_count <= 1 THEN
+                SIGNAL SQLSTATE '45000'
+                SET MESSAGE_TEXT = 'Leave limit reached: At least 1 employee of this role must remain on duty.';
+            END IF;
         END IF;
     END IF;
 END //
@@ -422,7 +449,7 @@ SELECT
     v.vessel_name,
     vy.voyage_number,
     t.allocation_id,
-    t.driver_id,
+    da.driver_id,
     t.dispatch_status_code AS dispatch_status,
     t.allocated_at,
     t.accepted_at,
@@ -435,7 +462,8 @@ FROM containers c
 JOIN voyages vy ON vy.voyage_id = c.voyage_id
 JOIN vessels v ON v.vessel_id = vy.vessel_id
 LEFT JOIN truck_allocations t ON t.container_number = c.container_number
-LEFT JOIN drivers d ON d.driver_id = t.driver_id
+LEFT JOIN dispatch_assignments da ON da.allocation_id = t.allocation_id AND da.outcome_code IN ('accepted', 'completed')
+LEFT JOIN drivers d ON d.driver_id = da.driver_id
 LEFT JOIN driver_locations dl ON dl.driver_id = d.driver_id;
 
 SET FOREIGN_KEY_CHECKS = 1;

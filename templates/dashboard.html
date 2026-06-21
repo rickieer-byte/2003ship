@@ -873,7 +873,11 @@ function submitPod() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ container_number: cNum, pod_note: note, pod_signature: signature })
-    }).then(() => {
+    })
+    .then(r => r.json()).then(data => {
+        if (data.port_slots) applyPortSlots(data.port_slots);
+        closePodModal();
+        refreshDispatchState();
         const row = document.getElementById(`row-${cNum}`);
         if (row) {
             row.classList.add('fade-out');
