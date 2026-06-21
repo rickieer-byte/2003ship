@@ -82,11 +82,31 @@
             text-decoration: none;
             font-weight: 600;
         }
+        .flash {
+            background-color: #fee2e2;
+            color: #991b1b;
+            border: 1px solid #fecaca;
+            padding: 12px 16px;
+            border-radius: 4px;
+            font-size: 13px;
+            margin-bottom: 20px;
+            font-weight: 500;
+            border-left: 4px solid #ef4444;
+        }
     </style>
 </head>
 <body>
 <div class="card">
     <h2>Access Provisioning</h2>
+    
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+        {% for message in messages %}
+          <div class="flash">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
     <form method="POST">
         <div class="form-group">
             <label>Username</label>

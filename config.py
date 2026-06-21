@@ -9,7 +9,7 @@ def _bool(val, default=False):
     return str(val).lower() in ('1', 'true', 'yes', 'on')
 
 class Config:
-    SECRET_KEY = os.getenv('FLASK_SECRET_KEY', 'dev-fallback-key')
+    SECRET_KEY = os.getenv('FLASK_SECRET_KEY') or 'dev-fallback-key'
     MYSQL_HOST = os.getenv('DB_HOST', 'localhost')
     MYSQL_USER = os.getenv('DB_USER', 'root')
     MYSQL_PASSWORD = os.getenv('DB_PASSWORD', '')
@@ -17,15 +17,14 @@ class Config:
     MYSQL_CURSORCLASS = 'DictCursor'
 
     SIMULATION_MODE = _bool(os.getenv('SIMULATION_MODE', 'true'), default=True)
-    GEOFENCE_RADIUS_KM = float(os.getenv('GEOFENCE_RADIUS_KM', '2.0'))
-    SIM_TICK_STALE_SECONDS = int(os.getenv(
-        'SIM_TICK_STALE_SECONDS',
-        '3' if _bool(os.getenv('SIMULATION_MODE', 'true'), default=True) else '120',
+    GEOFENCE_RADIUS_KM = float(os.getenv('GEOFENCE_RADIUS_KM') or '2.0')
+    SIM_TICK_STALE_SECONDS = int(os.getenv('SIM_TICK_STALE_SECONDS') or (
+        '3' if _bool(os.getenv('SIMULATION_MODE') or 'true', default=True) else '120'
     ))
 
     SLACK_WEBHOOK_URL = os.getenv('SLACK_WEBHOOK_URL', '')
     SMTP_HOST = os.getenv('SMTP_HOST', '')
-    SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
+    SMTP_PORT = int(os.getenv('SMTP_PORT') or '587')
     SMTP_USE_TLS = _bool(os.getenv('SMTP_USE_TLS', 'true'), default=True)
     SMTP_USER = os.getenv('SMTP_USER', '')
     SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
