@@ -207,11 +207,10 @@ def auto_init_db():
 
 auto_init_db()
 
-# Server Instance Run Token Key Generation
-SERVER_RUN_ID = str(uuid.uuid4())
+# Server Instance JWT Key
 JWT_SECRET = app.config['SECRET_KEY']
 
-print(f"[*] App System Initialized. Active Server Run ID: {SERVER_RUN_ID}")
+print(f"[*] App System Initialized.")
 
 # -------------------------------------------------------------
 # PYJWT AUTHENTICATION DECORATORS (PATCHED)
@@ -228,15 +227,6 @@ def requires_authenticated_session():
             try:
                 # Decrypt and decode signature check
                 payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], leeway=10)
-                
-                # Check claim for application restart stale sessions
-                if payload.get("run_id") != SERVER_RUN_ID:
-                    print("[SECURITY] Stale session token from a previous server run detected. Voiding session.")
-                    flash("Your session expired because the operations server restarted.", "warning")
-                    response = make_response(redirect(url_for("login")))
-                    response.delete_cookie("access_token", path="/")
-                    return response
-                    
                 # Bind thread parameters safely to Flask global application context
                 # PATCH: Explicitly handle string-to-int conversion to protect against type errors
                 g.current_user_id = int(payload["sub"])
@@ -265,14 +255,6 @@ def requires_role(required_role_name):
                 return redirect(url_for("login"))
             try:
                 payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], leeway=10)
-                
-                if payload.get("run_id") != SERVER_RUN_ID:
-                    print("[SECURITY] Auditor token out-of-sync with active server instance. Evicting.")
-                    flash("Your session expired because the operations server restarted.", "warning")
-                    response = make_response(redirect(url_for("login")))
-                    response.delete_cookie("access_token", path="/")
-                    return response
-                    
                 # PATCH: Explicitly handle string-to-int conversion here as well
                 g.current_user_id = int(payload["sub"])
                 g.current_user_username = str(payload["username"])
@@ -348,7 +330,7 @@ def login():
                 "sub": str(user['user_id']),
                 "username": user['username'],
                 "role": user['role'],
-                "run_id": SERVER_RUN_ID,
+                "iat": datetime.datetime.now(datetime.timezone.utc),
                 "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)
             }
             token = jwt.encode(payload, JWT_SECRET, algorithm="HS256")
@@ -463,9 +445,8 @@ def walkthroughs_dashboard():
     if token:
         try:
             payload = jwt.decode(token, JWT_SECRET, algorithms=["HS256"], leeway=10)
-            if payload.get("run_id") == SERVER_RUN_ID:
-                username = payload.get("username")
-                role = payload.get("role")
+            username = payload.get("username")
+            role = payload.get("role")
         except Exception:
             pass
     return render_template('walkthroughs.html', username=username, role=role)
@@ -475,13 +456,16 @@ def generate_auto_login_token(user_id, username, role):
         "sub": str(user_id),
         "username": username,
         "role": role,
-        "run_id": SERVER_RUN_ID,
-        "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=8)
+        "iat": datetime.datetime.now(datetime.timezone.utc),
+        "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
     }
     return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
 
 @app.route('/api/walkthrough/setup/<int:flow_id>', methods=['POST'])
 def walkthrough_setup(flow_id):
+    if not Config.DEMO_MODE:
+        return jsonify({"error": "Walkthroughs are disabled in this environment. Enable DEMO_MODE in config to use."}), 403
+
     from db.setup import run_setup
     cursor = mysql.connection.cursor()
     try:
@@ -609,7 +593,7 @@ def mis_dashboard():
 @app.route('/api/dispatch/check-availability', methods=['POST'])
 @requires_authenticated_session()
 def check_availability():
-    data = request.json
+    data = request.json or {}
     container_num = data.get('container_number')
     
     cursor = mysql.connection.cursor()
@@ -633,7 +617,7 @@ def check_availability():
 @app.route('/api/dispatch/allocate', methods=['POST'])
 @requires_authenticated_session()
 def allocate_truck():
-    data = request.json
+    data = request.json or {}
     container_num = data.get('container_number')
     
     cursor = mysql.connection.cursor()
@@ -668,7 +652,7 @@ def allocate_truck():
 @app.route('/api/dispatch/allocate-emergency', methods=['POST'])
 @requires_authenticated_session()
 def allocate_emergency():
-    data = request.json
+    data = request.json or {}
     container_num = data.get('container_number')
     cursor = mysql.connection.cursor()
     try:
@@ -709,7 +693,7 @@ def allocate_emergency():
 @app.route('/api/container/expunge', methods=['POST'])
 @requires_authenticated_session()
 def expunge_container():
-    data = request.json
+    data = request.json or {}
     container_num = data.get('container_number')
     pod_note = data.get('pod_note', '')
     pod_signature = data.get('pod_signature', '')

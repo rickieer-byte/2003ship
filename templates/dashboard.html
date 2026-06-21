@@ -745,6 +745,12 @@ function applyFleetBar(fleet) {
 function updateActionCell(cNum, info) {
     const cell = document.getElementById(`action-${cNum}`);
     if (!cell) return;
+    
+    // Hash the current info state to prevent DOM thrashing every 2 seconds
+    const stateHash = info.dispatch_status + info.accepted + info.can_expunge + info.slot_booked + info.picked_up + info.driver_name;
+    if (cell.dataset.renderedHash === stateHash) return;
+    cell.dataset.renderedHash = stateHash;
+
     if (info.dispatch_status === 'Pending') {
         cell.textContent = '';
         if (info.rejection_hint) {

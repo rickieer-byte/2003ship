@@ -236,7 +236,7 @@ def get_fleet_status(cursor, as_of=None):
 def get_next_shift_hint(cursor, as_of=None):
     as_of = as_of or datetime.datetime.now()
     cursor.execute("""
-        SELECT ds.day_of_week, TIME_FORMAT(ds.shift_start, '%%H:%%i') AS shift_start, d.driver_name
+        SELECT ds.day_of_week, TIME_FORMAT(ds.shift_start, '%H:%i') AS shift_start, d.driver_name
         FROM driver_schedules ds
         JOIN drivers d ON d.driver_id = ds.driver_id
         WHERE d.status_code = 'Available'

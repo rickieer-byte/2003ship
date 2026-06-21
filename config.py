@@ -17,6 +17,7 @@ class Config:
     MYSQL_CURSORCLASS = 'DictCursor'
 
     SIMULATION_MODE = _bool(os.getenv('SIMULATION_MODE', 'true'), default=True)
+    DEMO_MODE = _bool(os.getenv('DEMO_MODE', 'false'), default=False)
     GEOFENCE_RADIUS_KM = float(os.getenv('GEOFENCE_RADIUS_KM') or '2.0')
     SIM_TICK_STALE_SECONDS = int(os.getenv('SIM_TICK_STALE_SECONDS') or (
         '3' if _bool(os.getenv('SIMULATION_MODE') or 'true', default=True) else '120'
