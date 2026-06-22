@@ -20,3 +20,4 @@ db/__pycache__/setup.cpython-314.pyc
 __pycache__/app.cpython-314.pyc
 __pycache__/config.cpython-314.pyc
 db/__pycache__/setup.cpython-312.pyc
+test_queue.py

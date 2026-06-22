@@ -287,7 +287,7 @@ CREATE TABLE delivery_completions (
 CREATE TABLE port_slot_bookings (
     booking_id INT AUTO_INCREMENT PRIMARY KEY,
     port_id VARCHAR(20) NOT NULL,
-    slot_number TINYINT UNSIGNED NOT NULL,
+    slot_number TINYINT UNSIGNED NULL,
     allocation_id INT NOT NULL,
     booked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     released_at DATETIME DEFAULT NULL,

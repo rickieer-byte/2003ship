@@ -285,7 +285,7 @@ def register():
         username = request.form['username']
         email = request.form['email']
         password = request.form['password']
-        role = request.form.get('role', 'Planner')
+        role = 'Planner'
         
         hashed_password = generate_password_hash(password)
         cursor = mysql.connection.cursor()
@@ -405,6 +405,11 @@ def leave_apply():
         flash("Missing employee selection or leave dates.", "danger")
         return redirect(url_for('leave_dashboard'))
         
+    if g.current_user_role != 'Fleet Manager':
+        if employee_type != g.current_user_role or str(employee_id) != str(g.current_user_id):
+            flash("Unauthorized to apply for leave on behalf of others.", "danger")
+            return redirect(url_for('leave_dashboard'))
+            
     try:
         start_date = datetime.datetime.strptime(start_date_str, "%Y-%m-%d").date()
         end_date = datetime.datetime.strptime(end_date_str, "%Y-%m-%d").date()
@@ -441,6 +446,13 @@ def leave_apply():
 def leave_cancel(leave_id):
     cursor = mysql.connection.cursor()
     try:
+        if g.current_user_role != 'Fleet Manager':
+            cursor.execute("SELECT user_id FROM leave_requests WHERE leave_id = %s", (leave_id,))
+            leave_req = cursor.fetchone()
+            if not leave_req or str(leave_req.get('user_id')) != str(g.current_user_id):
+                flash("Unauthorized to cancel this leave request.", "danger")
+                return redirect(url_for('leave_dashboard'))
+                
         cancel_leave(cursor, leave_id)
         mysql.connection.commit()
         flash("Leave request cancelled successfully.", "info")
@@ -696,6 +708,11 @@ def allocate_emergency():
         })
         port_slots = get_slot_status(cursor)
         mysql.connection.commit()
+        
+        import threading
+        if allocation and slot_number is not None:
+            threading.Thread(target=_emergency_driver_fast_flow, args=(allocation['allocation_id'], container_num)).start()
+            
         return jsonify({
             "status": "success",
             "slot_number": slot_number,
@@ -706,6 +723,49 @@ def allocate_emergency():
         return jsonify({"status": "error", "message": str(e)}), 500
     finally:
         cursor.close()
+
+def _emergency_driver_fast_flow(allocation_id, container_num):
+    import time
+    from services.port_slots import allocation_has_active_slot, release_slots_for_allocation
+    from services.containers import delete_allocation, delete_container, log_event
+    with app.app_context():
+        attempts = 0
+        while attempts < 60:
+            cursor = mysql.connection.cursor()
+            status = allocation_has_active_slot(cursor, allocation_id)
+            cursor.close()
+            if status is not None and status != "queued":
+                break
+            time.sleep(1)
+            attempts += 1
+            
+        if attempts >= 60: return
+        
+        time.sleep(3)
+        cursor = mysql.connection.cursor()
+        try:
+            cursor.execute("UPDATE truck_allocations SET picked_up_at = NOW(), dispatch_status_code = 'At Warehouse' WHERE allocation_id = %s", (allocation_id,))
+            mysql.connection.commit()
+        except Exception: pass
+        finally: cursor.close()
+            
+        time.sleep(4)
+        cursor = mysql.connection.cursor()
+        try:
+            release_slots_for_allocation(cursor, allocation_id)
+            log_event(cursor, container_num, 'POD_SYSTEM', 'DELIVERY_COMPLETED', {
+                'pod_note': 'Emergency auto-delivery',
+                'pod_signature': 'SYSTEM_SIGNATURE',
+                'completed_by': 'Emergency Contractor',
+                'assignment_id': None,
+            })
+            delete_allocation(cursor, container_num)
+            delete_container(cursor, container_num)
+            mysql.connection.commit()
+        except Exception:
+            mysql.connection.rollback()
+        finally:
+            cursor.close()
 
 @app.route('/api/container/expunge', methods=['POST'])
 @requires_authenticated_session()
@@ -1109,6 +1169,15 @@ def driver_book_port_slot():
                 'message': 'All prime mover slots are occupied. Retry when a slot frees up.',
                 **slot_status,
             }), 409
+        elif slot_number == "queued":
+            mysql.connection.commit()
+            slot_status = get_slot_status(cursor)
+            return jsonify({
+                'status': 'queued',
+                'message': 'Added to the prime mover slot queue. You will be notified when a slot frees up.',
+                'slot_number': 'queued',
+                **slot_status,
+            })
 
         mysql.connection.commit()
         slot_status = get_slot_status(cursor)
